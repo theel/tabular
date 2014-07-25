@@ -3,13 +3,25 @@
  */
 
 import org.scalatest.FunSpec
-import tabular.ListTable
-import tabular.Tabular._
+import org.scalatest.matchers.ShouldMatchers
+import tabular.QuerySupport._
+import tabular._
 
-class QueryTest extends FunSpec {
+class QueryTest extends FunSpec with ShouldMatchers{
 
   case class Person(firstName: String, lastName: String, age: Int) {
-    override def toString() = "firstName=" + firstName + ",lastName=" + lastName + ",age=" + age
+    override def toString() = "Person(%s, %s, %d)".format(firstName, lastName, age)
+    def toRow() =  Seq(firstName, lastName, age)
+  }
+
+  class PersonDF extends DataFactory[Person]{
+    override def getColumns():  Seq[Column[Person, _]]  = Seq(//
+      new Column[Person, String]("firstName", _.firstName),//
+      new Column[Person, String]("lastName", _.lastName),//
+      new Column[Person, Int]("age", _.age)//
+    )
+
+    override def getValue(value: Person, s: String): Any = ???
   }
 
   val data = Seq(//
@@ -17,22 +29,47 @@ class QueryTest extends FunSpec {
     new Person("John", "Doe", 71), //
     new Person("John", "Johnson", 5) //
   )
-  val table = new ListTable[Person](data)
+  val dataRows = data.map(_.toRow())
 
-  describe("It should fulfill different kind of queries correctly") {
+  val table = new ListTable[Person](data, new PersonDF())
 
-    it("identity select") {
+  def executeAndMatch(query: Statement[Person], expected: Seq[Seq[Any]]) = {
+    val results = query.compile().execute()
+    val resultSeq = results.rows().toSeq
+    println(resultSeq.map(row => row.map(_.getClass)))
+    println(resultSeq.mkString(","))
+    println(expected.map(row => row.map(_.getClass)))
+    println(expected.mkString(","))
+    resultSeq should equal (expected)
+  }
+
+  describe("Tabular query") {
+
+    it("should allow identity select") {
       val query = table select (p => p)
-    }
-    it("simple field select") {
-      val query = table select (_.firstName)
-      //      dump(query2.compile.execute())
+      val expected = data.map(Seq(_)) //each row has single column of Person
+      executeAndMatch(query, expected)
     }
 
-    it("select with func and literal") {
-      val query = table select(_.firstName, _.lastName, _.age > 65, 1)
-      //      dump(query3.compile.execute())
+    it("should allow select with func") {
+      val query = table select (_.firstName, _.age > 65)
+      val expected = data.map(p => Seq(p.firstName, p.age > 65))
+      executeAndMatch(query, expected)
     }
+
+    it("should allow select with literals") {
+      val query = table select(_.firstName, "test", 1)
+      val expected = data.map(p => Seq(p.firstName, "test", 1))
+      executeAndMatch(query, expected)
+    }
+
+    it("should allow select with symbol") {
+      val query = table select('firstName, 'lastName)
+      val expected = data.map(p => Seq(p.firstName, p.lastName))
+      executeAndMatch(query, expected)
+    }
+
+
 
     it("select with filter") {
       val query = table select(_.firstName, _.lastName, _.age > 65, 1) where (p => p.firstName == "John" && p.lastName == "Doe")
