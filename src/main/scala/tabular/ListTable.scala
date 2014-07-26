@@ -1,5 +1,6 @@
 package tabular
 
+import tabular.QuerySupport.AndFilterFunc
 import tabular.Tabular._
 
 class ListTable[T](val data: Seq[T], val fac: DataFactory[T] = null) extends Table[T](fac) {
@@ -8,8 +9,8 @@ class ListTable[T](val data: Seq[T], val fac: DataFactory[T] = null) extends Tab
     val spec = stmt.spec
     val identity = new IdentityStep[Seq[T]](data)
     val filteredStep =
-      if (spec.filter != null) {
-        new ExecutionStep[Seq[T], Seq[T]]("Filter with %s".format(spec.filter), identity, _.filter(spec.filter))
+      if (spec.filters != null) {
+        new ExecutionStep[Seq[T], Seq[T]]("Filter with %s".format(spec.filters), identity, _.filter(new AndFilterFunc[T](spec.filters)))
       } else {
         identity
       }
@@ -40,14 +41,28 @@ class ListTable[T](val data: Seq[T], val fac: DataFactory[T] = null) extends Tab
     results.map(a => if (classOf[Aggregate[Int]].isInstance(a)) a.asInstanceOf[Aggregate[Int]].data else a)
   }
 
+  def projectGroups(groups: Seq[Func[T]], projects: Seq[Func[T]]): ListView[RowTuple] = {
+    val newData = data.map(row => (groups.map(_.apply(row)), projects.map(_.apply(row))))
+    new ListView[RowTuple](newData)
+  }
+
+  def project(projects: Seq[Func[T]]): ListView[Row] = {
+    val newData = data.map(row => projects.map(_.apply(row)))
+    new ListView[Row](newData)
+  }
+
   override def rows(): Iterator[T] = data.iterator
 }
 
-class ListView(data: Seq[Row]) extends View[Row] {
+class ListView[T](data: Seq[T]) extends View[T] {
   val impl = new ListTable(data)
 
   //abstracts
-  override def rows(): Iterator[Row] = impl.rows()
+  override def rows(): Iterator[T] = impl.rows()
 
-  override def compile(stmt: Statement[Row]): Query[Row] = impl.compile(stmt)
+  override def compile(stmt: Statement[T]): Query[T] = impl.compile(stmt)
+
+  override def toString(): String = {
+    "ListView(\n%s)".format(impl.rows().toSeq.mkString("\n"))
+  }
 }

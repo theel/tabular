@@ -7,18 +7,19 @@ import org.scalatest.matchers.ShouldMatchers
 import tabular.QuerySupport._
 import tabular._
 
-class QueryTest extends FunSpec with ShouldMatchers{
+class QueryTest extends FunSpec with ShouldMatchers {
 
   case class Person(firstName: String, lastName: String, age: Int) {
     override def toString() = "Person(%s, %s, %d)".format(firstName, lastName, age)
-    def toRow() =  Seq(firstName, lastName, age)
+
+    def toRow() = Seq(firstName, lastName, age)
   }
 
-  class PersonDF extends DataFactory[Person]{
-    override def getColumns():  Seq[Column[Person, _]]  = Seq(//
-      new Column[Person, String]("firstName", _.firstName),//
-      new Column[Person, String]("lastName", _.lastName),//
-      new Column[Person, Int]("age", _.age)//
+  class PersonDF extends DataFactory[Person] {
+    override def getColumns(): Seq[Column[Person, _]] = Seq(//
+      new Column[Person, String]("firstName", _.firstName), //
+      new Column[Person, String]("lastName", _.lastName), //
+      new Column[Person, Int]("age", _.age) //
     )
 
     override def getValue(value: Person, s: String): Any = ???
@@ -27,7 +28,8 @@ class QueryTest extends FunSpec with ShouldMatchers{
   val data = Seq(//
     new Person("John", "Smith", 20), //
     new Person("John", "Doe", 71), //
-    new Person("John", "Johnson", 5) //
+    new Person("John", "Johnson", 5),//
+    new Person("Adam", "Smith", 10)//
   )
   val dataRows = data.map(_.toRow())
 
@@ -40,7 +42,7 @@ class QueryTest extends FunSpec with ShouldMatchers{
     println(resultSeq.mkString(","))
     println(expected.map(row => row.map(_.getClass)))
     println(expected.mkString(","))
-    resultSeq should equal (expected)
+    resultSeq should equal(expected)
   }
 
   describe("Tabular query") {
@@ -52,7 +54,7 @@ class QueryTest extends FunSpec with ShouldMatchers{
     }
 
     it("should allow select with func") {
-      val query = table select (_.firstName, _.age > 65)
+      val query = table select(_.firstName, _.age > 65)
       val expected = data.map(p => Seq(p.firstName, p.age > 65))
       executeAndMatch(query, expected)
     }
@@ -69,12 +71,37 @@ class QueryTest extends FunSpec with ShouldMatchers{
       executeAndMatch(query, expected)
     }
 
-
-
-    it("select with filter") {
-      val query = table select(_.firstName, _.lastName, _.age > 65, 1) where (p => p.firstName == "John" && p.lastName == "Doe")
-      //    dump(query4.compile.execute())
+    it("should allow select *") {
+      val query = table select ('*) //need to support multi-select
+      val expected = data.map(p => Seq(Seq(p.firstName, p.lastName, p.age))) //TODO: need to flatten
+      executeAndMatch(query, expected)
     }
+
+    it("should select with filter func") {
+      val query = table select(_.firstName, _.lastName, _.age) where (_.age > 65)
+      val expected = data.filter(_.age > 65).map(p => Seq(p.firstName, p.lastName, p.age))
+      executeAndMatch(query, expected)
+    }
+
+    it("should select with complex filter func") {
+      val filterFunc = (p: Person) => (p.firstName == "John" && p.age>65) || p.lastName == "Smith"
+      val query = table select(_.firstName, _.lastName, _.age) where (filterFunc)
+      val expected = data.filter(filterFunc).map(p => Seq(p.firstName, p.lastName, p.age))
+      executeAndMatch(query, expected)
+    }
+
+    it("should select with multiple filter funcs") {
+      val query = table select(_.firstName, _.lastName, _.age) where (_.firstName == "John", _.age > 65)
+      val expected = data.filter(p => p.firstName == "John" && p.age > 65).map(p => Seq(p.firstName, p.lastName, p.age))
+      executeAndMatch(query, expected)
+    }
+
+    it("should group by simple group") {
+      val query = table select(_.firstName) groupBy (_.firstName)
+      val expected = data.map(_.firstName).distinct.map(Seq(_))
+      executeAndMatch(query, expected)
+    }
+
 
     it("group by and order") {
       val query5 = table select(_.firstName, sum[Person](_.age)) groupBy (_.firstName) having (_.age > 20) orderBy (_.firstName)

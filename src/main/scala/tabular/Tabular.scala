@@ -6,12 +6,12 @@ import tabular.Tabular._
  * Represent query state
  * @tparam T
  */
-case class QuerySpec[T](val table: Table[T]) extends Cloneable{
+case class QuerySpec[T](val table: Table[T]) extends Cloneable {
   var limit: Limit = null
   var having: FilterFunc[T] = null
   var orderbys: Seq[OrderFunc[T]] = null
   var selects: Seq[SelectFunc[T]] = null
-  var filter: FilterFunc[T] = null
+  var filters: Seq[FilterFunc[T]] = null
   var groupbys: Seq[GroupFunc[T]] = null
 }
 
@@ -29,27 +29,27 @@ class Query[T](val spec: QuerySpec[T], val exec: Execution) {
  * Represent a statement. It wrap an query object and accumulate a QuerySpec
  * @tparam T
  */
-class Statement[T](val spec: QuerySpec[T]){
+class Statement[T](val spec: QuerySpec[T]) {
   def groupBy(groupbys: GroupFunc[T]*): Statement[T] = {
-    assert(spec.groupbys==null)
+    assert(spec.groupbys == null)
     spec.groupbys = groupbys
     return this
   }
 
   def orderBy(orderbys: OrderFunc[T]*): Statement[T] = {
-    assert(spec.orderbys==null)
+    assert(spec.orderbys == null)
     spec.orderbys = orderbys
     return this
   }
 
   def having(having: FilterFunc[T]): Statement[T] = {
-    assert(spec.having==null)
+    assert(spec.having == null)
     spec.having = having
     return this
   }
 
   def limit(limit: Limit): Statement[T] = {
-    assert(spec.limit==null)
+    assert(spec.limit == null)
     spec.limit = limit
     return this
   }
@@ -66,15 +66,20 @@ class Statement[T](val spec: QuerySpec[T]){
  */
 class Selected[T](table: Table[T], selects: Seq[SelectFunc[T]]) extends Statement[T](new QuerySpec[T](table)) {
   spec.selects = selects
-  selects.foreach(f => println("Select = " + f.getClass))
+  selects.foreach(f => f match {
+    case s: DataFactorySelectFunc[T] =>
+      s.setDataFactory(table.dataFac) //Setting datafactory, and validate
+    case default =>
+    //do nothing
+  })
 
   /**
    * Apply filter operation
-   * @param filter
+   * @param filters
    * @return
    */
-  def where(filter: FilterFunc[T]): Statement[T] = {
-    spec.filter = filter //TODO: build for immutability
+  def where(filters: FilterFunc[T]*): Statement[T] = {
+    spec.filters = filters //TODO: build for immutability
     new Statement(spec)
   }
 }
@@ -83,7 +88,9 @@ class Selected[T](table: Table[T], selects: Seq[SelectFunc[T]]) extends Statemen
  * A view is table-like result after a query is executed
  * @tparam T
  */
-abstract class View[T] extends Table[T](null) {} //TODO: fix data factory
+abstract class View[T] extends Table[T](null) {}
+
+//TODO: fix data factory
 
 /**
  * The table is abstraction of queryable source.
@@ -117,25 +124,44 @@ class Execution(val steps: ExecutionStep[_, View[Row]]) {
 
 class ExecutionStep[This, That](val desc: String, prev: LazyStep[This], f: (This) => That) extends LazyStep[That] {
   def execute(): That = {
-    f.apply(prev.execute())
+    println("Executing %s".format(desc))
+    val results = f.apply(prev.execute())
+    println(results)
+    results
   }
 }
 
 abstract class DataFactory[T] {
-  case class Column[T, U: Manifest](val name: String, val f: (T) => U){}
+
+  case class Column[T, U: Manifest](val name: String, val select: (T) => U) {}
+
+  def columnMap[String, Column[T, _]] = Map(getColumns().map(c => (c.name, c)): _*)
+
   def getColumns(): Seq[Column[T, _]]
+
   def getValue(value: T, s: String): Any
 }
 
 object Tabular {
   type Func[T] = (T) => Any
-//  abstract class SelectFunc[T] extends Func[T] {
-//    var fac: DataFactory[T] = null
-//  }
-  type SelectFunc[T] = (T) => Any
+//  type SelectFunc[T] = (T) => Any
+
+  type SelectFunc[T] = Func[T]
+
+  abstract class DataFactorySelectFunc[T] extends SelectFunc[T] {
+    var fac: DataFactory[T] = null
+
+    def setDataFactory(fac: DataFactory[T]) = {
+      this.fac = fac
+      validate()
+    }
+
+    def validate()
+  }
+
   type FilterFunc[T] = (T) => Boolean
-  type GroupFunc[T] = (T) => Any
-  type OrderFunc[T] = (T) => Any
+  type GroupFunc[T] = Func[T]
+  type OrderFunc[T] = Func[T]
   type Row = Seq[Any]
   type RowTuple = (Row, Row)
   type Limit = (Int, Int)
