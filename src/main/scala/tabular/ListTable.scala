@@ -1,35 +1,117 @@
 package tabular
 
-import tabular.QuerySupport.AndFilterFunc
+import tabular.QuerySupport.{AliasSelect, AndFilterFunc, NamedSelect}
 import tabular.Tabular._
 
-class ListTable[T](val data: Seq[T], val fac: DataFactory[T] = null) extends Table[T](fac) {
+
+class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
+  type RowkeyFunc = (Row) => Row
+  type AggregateFunc = Seq[Row] => Row
+
+  class IndicesRowkeyFunc(indicies: Seq[Int]) extends RowkeyFunc {
+    override def apply(v1: Row): Row = {
+      indicies.map(v1(_))
+    }
+  }
+
+  class RowDataFactory(fieldNames: Seq[String]) extends DataFactory[Row] {
+
+    val columns = fieldNames.zipWithIndex.map { case (name, index) => new Column[Row, Any](name, row => row(index))}
+
+    override def getColumns(): Seq[Column[Row, _]] = columns
+
+    override def getValue(value: Row, s: String): Any = ???
+  }
+
+  class SimpleAggregateFunc extends AggregateFunc {
+
+    def apply(data: Seq[Row]): Row = {
+      val results = data.reduce((a: Row, b: Row) => {
+        a.zip(b).map(t => if (classOf[Aggregate[Int]].isInstance(t._1)) {
+          t._1.asInstanceOf[Aggregate[Int]].aggregate(t._2.asInstanceOf[Aggregate[Int]])
+        } else t._1)
+      })
+      results.map(a => if (classOf[Aggregate[Int]].isInstance(a)) a.asInstanceOf[Aggregate[Int]].data else a)
+    }
+  }
+
 
   override def compile(stmt: Statement[T]): Query[T] = {
     val spec = stmt.spec
-    val identity = new IdentityStep[Seq[T]](data)
-    val filteredStep =
-      if (spec.filters != null) {
-        new ExecutionStep[Seq[T], Seq[T]]("Filter with %s".format(spec.filters), identity, _.filter(new AndFilterFunc[T](spec.filters)))
-      } else {
-        identity
-      }
-    if (spec.groupbys != null) {
-      //project group->select tuples
-      val projectGroupStep = new ExecutionStep[Seq[T], Seq[RowTuple]]("Project groups (%s) -> (%s)".format(spec.groupbys.mkString(","), spec.selects.mkString(",")),
-        filteredStep, _.map(row => (spec.groupbys.map(func => func.apply(row)) ->
-          spec.selects.map(func => func.apply(row)))))
-      val groupByStep = new ExecutionStep[Seq[RowTuple], Map[Row, Seq[RowTuple]]]("Group by group keys",
-        projectGroupStep, _.groupBy(_._1))
-      val finalStep = new ExecutionStep[Map[Row, Seq[RowTuple]], View[Row]]("Aggregated rows", groupByStep,
-        groups =>
-          new ListView(groups.map(a => aggregate(a._2.map(_._2))).toSeq))
-      new Query(spec, new Execution(finalStep))
+    val filteredData = if (spec.filters != null) {
+      data.filter(new AndFilterFunc[T](spec.filters.asInstanceOf[Seq[FilterFunc[T]]]))
     } else {
-      val finalStep = new ExecutionStep[Seq[T], View[Row]]("Select " + spec.selects, filteredStep,
-        groups => new ListView(groups.map(row => spec.selects.map(func => func.apply(row)))))
-      return new Query(spec, new Execution(finalStep))
+      data
     }
+    val selectFieldNames: List[String] = spec.selects.zipWithIndex.map {
+      case (value, index) => value match {
+        case sym: NamedSelect[T] =>
+          sym.name
+        case alias: AliasSelect[T] =>
+          alias.name
+        case default =>
+          "field%d".format(index)
+      }
+    }.toList
+    val selects = spec.selects.asInstanceOf[Seq[SelectFunc[T]]]
+    val selectedGroupedData = if (spec.groupbys != null) {
+      //first select
+      val selectedData = filteredData.map(t => selects.map(_.apply(t)))
+
+      //the group by
+      val groupIndices: Seq[Int] = getIndices(selectFieldNames, spec.groupbys)
+      val groupData = selectedData.groupBy(new IndicesRowkeyFunc(groupIndices))
+      val aggregatedData = groupData.map(t => aggregate(t._2))
+      aggregatedData
+      //TODO: implement having
+    } else {
+      val selectedData = filteredData.map(t => selects.map(_.apply(t)))
+      selectedData
+    }
+    //TODO: ordering, and limit
+    val ordered = if (spec.orderbys != null) {
+      val sortIndices = getIndices(selectFieldNames, spec.orderbys)
+      val sortFunc = (a: Row, b: Row) => {
+        var lt = false
+        var i = 0
+        val n=sortIndices.size
+        while (!lt && i < n){
+          val aValue = a(i)
+          val bValue = b(i)
+          val compared = aValue match {
+            case compA: Comparable[AnyRef] =>
+              compA.compareTo(bValue.asInstanceOf[AnyRef])
+            case orderA: Ordered[AnyRef] =>
+              orderA.compareTo(bValue.asInstanceOf[AnyRef])
+            case default =>
+              throw new IllegalArgumentException("Unknown sorting value " + aValue + " and " + bValue)
+          }
+          lt = compared < 0
+          i += 1
+        }
+        lt
+      }
+      selectedGroupedData.toSeq.sortWith {
+        sortFunc
+      }
+    } else {
+      selectedGroupedData
+    }
+
+    //TODO: WIP regarding execution step
+    val step1 = new IdentityStep[Row](new ListView[Row](ordered.toSeq, new RowDataFactory(selectFieldNames)))
+    val step2 = new ExecutionStep[Row, Row]("Step2", step1, _.asInstanceOf[View[Row]])
+    new Query(spec, new Execution(step2))
+  }
+
+  def getIndices(fieldNames: List[String], names: Seq[Symbol]): Seq[Int] = {
+    val indices = names.map(symbol => fieldNames.indexOf(symbol.name))
+    val notFoundIndices = indices.zipWithIndex.filter(_._1 == -1).map(_._2) //find anything that doesn't have mapping in select
+    if (notFoundIndices.size > 0) {
+      val fieldNames = notFoundIndices.map(names(_))
+      throw new IllegalArgumentException("Unknown fields %s".format(fieldNames.mkString(",")))
+    }
+    indices
   }
 
   def aggregate(data: Seq[Row]): Row = {
@@ -41,21 +123,11 @@ class ListTable[T](val data: Seq[T], val fac: DataFactory[T] = null) extends Tab
     results.map(a => if (classOf[Aggregate[Int]].isInstance(a)) a.asInstanceOf[Aggregate[Int]].data else a)
   }
 
-  def projectGroups(groups: Seq[Func[T]], projects: Seq[Func[T]]): ListView[RowTuple] = {
-    val newData = data.map(row => (groups.map(_.apply(row)), projects.map(_.apply(row))))
-    new ListView[RowTuple](newData)
-  }
-
-  def project(projects: Seq[Func[T]]): ListView[Row] = {
-    val newData = data.map(row => projects.map(_.apply(row)))
-    new ListView[Row](newData)
-  }
-
   override def rows(): Iterator[T] = data.iterator
 }
 
-class ListView[T](data: Seq[T]) extends View[T] {
-  val impl = new ListTable(data)
+class ListView[T](data: Seq[T], fac: DataFactory[T]) extends View[T](fac) {
+  val impl = new ListTable(data, fac)
 
   //abstracts
   override def rows(): Iterator[T] = impl.rows()
@@ -63,6 +135,7 @@ class ListView[T](data: Seq[T]) extends View[T] {
   override def compile(stmt: Statement[T]): Query[T] = impl.compile(stmt)
 
   override def toString(): String = {
-    "ListView(\n%s)".format(impl.rows().toSeq.mkString("\n"))
+    val columns = fac.getColumns().map(c => "\"%s\"".format(c.name)).mkString(",")
+    "ListView[%s]\n%s".format(columns, impl.rows().toSeq.mkString("\n"))
   }
 }

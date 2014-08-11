@@ -2,17 +2,19 @@ package tabular
 
 import tabular.Tabular._
 
+import scala.collection.immutable.ListMap
+
 /**
  * Represent query state
  * @tparam T
  */
 case class QuerySpec[T](val table: Table[T]) extends Cloneable {
   var limit: Limit = null
-  var having: FilterFunc[T] = null
-  var orderbys: Seq[OrderFunc[T]] = null
-  var selects: Seq[SelectFunc[T]] = null
-  var filters: Seq[FilterFunc[T]] = null
-  var groupbys: Seq[GroupFunc[T]] = null
+  var having: Seq[AFilterFunc[T]] = null
+  var orderbys: Seq[Symbol] = null
+  var selects: Seq[ASelectFunc[T]] = null
+  var filters: Seq[AFilterFunc[T]] = null
+  var groupbys: Seq[Symbol] = null
 }
 
 /**
@@ -30,19 +32,19 @@ class Query[T](val spec: QuerySpec[T], val exec: Execution) {
  * @tparam T
  */
 class Statement[T](val spec: QuerySpec[T]) {
-  def groupBy(groupbys: GroupFunc[T]*): Statement[T] = {
+  def groupBy(groupbys: Symbol*): Statement[T] = {
     assert(spec.groupbys == null)
     spec.groupbys = groupbys
     return this
   }
 
-  def orderBy(orderbys: OrderFunc[T]*): Statement[T] = {
+  def orderBy(orderbys: Symbol*): Statement[T] = {
     assert(spec.orderbys == null)
     spec.orderbys = orderbys
     return this
   }
 
-  def having(having: FilterFunc[T]): Statement[T] = {
+  def having(having: AFilterFunc[T]*): Statement[T] = {
     assert(spec.having == null)
     spec.having = having
     return this
@@ -64,7 +66,7 @@ class Statement[T](val spec: QuerySpec[T]) {
  * @param selects the select functions
  * @tparam T type of object in the table
  */
-class Selected[T](table: Table[T], selects: Seq[SelectFunc[T]]) extends Statement[T](new QuerySpec[T](table)) {
+class Selected[T](table: Table[T], selects: Seq[ASelectFunc[T]]) extends Statement[T](new QuerySpec[T](table)) {
   spec.selects = selects
   selects.foreach(f => f match {
     case s: DataFactorySelectFunc[T] =>
@@ -78,17 +80,37 @@ class Selected[T](table: Table[T], selects: Seq[SelectFunc[T]]) extends Statemen
    * @param filters
    * @return
    */
-  def where(filters: FilterFunc[T]*): Statement[T] = {
+  def where(filters: AFilterFunc[T]*): Statement[T] = {
     spec.filters = filters //TODO: build for immutability
     new Statement(spec)
   }
+
+  /**
+   * Apply filter operation
+   * @param filters
+   * @return
+   */
+  def where_(filters: FilterFunc[T]*): Statement[T] = {
+    spec.filters = filters.asInstanceOf[Seq[AFilterFunc[T]]] //TODO: build for immutability
+    new Statement(spec)
+  }
+
+}
+
+abstract class Tabular[T](val dataFac: DataFactory[T]) {
+
+
+  def rows(): Iterator[T]
+
+  def compile(stmt: Statement[T]): Query[T]
+
 }
 
 /**
  * A view is table-like result after a query is executed
  * @tparam T
  */
-abstract class View[T] extends Table[T](null) {}
+abstract class View[T](val df: DataFactory[T]) extends Tabular[T](df) {}
 
 //TODO: fix data factory
 
@@ -96,37 +118,49 @@ abstract class View[T] extends Table[T](null) {}
  * The table is abstraction of queryable source.
  * @tparam T
  */
-abstract class Table[T](val dataFac: DataFactory[T]) {
-  def select(selects: SelectFunc[T]*): Selected[T] = {
+abstract class Table[T](val fac: DataFactory[T]) extends Tabular[T](fac) {
+
+  def select(selects: ASelectFunc[T]*): Selected[T] = {
     new Selected[T](this, selects)
   }
 
-  //abstracts
-  def rows(): Iterator[T]
+  def select_(selects: SelectFunc[T]*): Selected[T] = {
+    new Selected[T](this, mapOrWrap(selects))
+  }
 
-  def compile(query: Statement[T]): Query[T]
+  class FuncSelect[T](f: (T) => Any) extends ASelectFunc[T] with SelectFunc[T] {
+    override def apply(v1: T): Any = f.apply(v1)
+  }
+
+  def mapOrWrap(selects: Seq[SelectFunc[T]]): Seq[ASelectFunc[T]] = {
+    selects.map { func =>
+      func match {
+        case a: ASelectFunc[T] => a
+        case default => new FuncSelect[T](func)
+      }
+    }
+  }
+
 }
 
 
 abstract class LazyStep[That] {
-  def execute(): That
+  def execute(): Tabular[That]
 }
 
-class IdentityStep[That](that: That) extends LazyStep[That] {
-  def execute(): That = {
+class IdentityStep[That](that: Tabular[That]) extends LazyStep[That] {
+  def execute(): Tabular[That] = {
     that
   }
 }
 
-class Execution(val steps: ExecutionStep[_, View[Row]]) {
+class Execution(val steps: ExecutionStep[_, Row]) {
   def execute(): View[Row] = steps.execute()
 }
 
-class ExecutionStep[This, That](val desc: String, prev: LazyStep[This], f: (This) => That) extends LazyStep[That] {
-  def execute(): That = {
-    println("Executing %s".format(desc))
+class ExecutionStep[This, That](val desc: String, prev: LazyStep[This], f: Tabular[This] => View[That]) extends LazyStep[That] {
+  def execute(): View[That] = {
     val results = f.apply(prev.execute())
-    println(results)
     results
   }
 }
@@ -135,20 +169,21 @@ abstract class DataFactory[T] {
 
   case class Column[T, U: Manifest](val name: String, val select: (T) => U) {}
 
-  def columnMap[String, Column[T, _]] = Map(getColumns().map(c => (c.name, c)): _*)
+  final def columnMap[String, Column[T, _]] = ListMap(getColumns().map(c => (c.name, c)): _*) //we need the ordering
 
   def getColumns(): Seq[Column[T, _]]
+
+  def getColumnNames(): Seq[String] = columnMap.keys.toSeq
 
   def getValue(value: T, s: String): Any
 }
 
 object Tabular {
   type Func[T] = (T) => Any
-//  type SelectFunc[T] = (T) => Any
+  type SelectFunc[T] = (T) => Any
 
-  type SelectFunc[T] = Func[T]
 
-  abstract class DataFactorySelectFunc[T] extends SelectFunc[T] {
+  abstract class DataFactorySelectFunc[T] extends ASelectFunc[T] with SelectFunc[T] {
     var fac: DataFactory[T] = null
 
     def setDataFactory(fac: DataFactory[T]) = {
@@ -160,10 +195,18 @@ object Tabular {
   }
 
   type FilterFunc[T] = (T) => Boolean
-  type GroupFunc[T] = Func[T]
-  type OrderFunc[T] = Func[T]
+
+  trait ASelectFunc[T]
+
+  trait AFilterFunc[T]
+
+  //  abstract class GroupFunc[T] extends Func[T]
+
+  //  abstract class OrderFunc[T] extends Func[T]
+
   type Row = Seq[Any]
   type RowTuple = (Row, Row)
+  type GroupedRows = (Row, Seq[Row])
   type Limit = (Int, Int)
 
   case class Aggregate[T](data: T, f: (T, T) => T) {
