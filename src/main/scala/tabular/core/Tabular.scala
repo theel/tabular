@@ -1,8 +1,7 @@
-package tabular
-
-import tabular.Tabular._
+package tabular.core
 
 import scala.collection.immutable.ListMap
+import tabular.core.Tabular._
 
 /**
  * Represent query state

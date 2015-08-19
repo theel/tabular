@@ -1,5 +1,7 @@
 package tabular
 
+import tabular.expression._
+
 /**
  * Created by tiong on 8/5/14.
  */

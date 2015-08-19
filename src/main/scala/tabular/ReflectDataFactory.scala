@@ -1,5 +1,7 @@
 package tabular
 
+import tabular.core.DataFactory
+
 /**
  * Created by tiong on 7/24/14.
  */

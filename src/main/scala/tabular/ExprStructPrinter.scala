@@ -1,5 +1,7 @@
 package tabular
 
+import tabular.expression.Expr
+
 /**
  * Created by tiong on 8/3/14.
  */

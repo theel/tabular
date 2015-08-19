@@ -1,6 +1,6 @@
-package tabular
+package tabular.core
 
-import tabular.Tabular._
+import tabular.core.Tabular._
 
 /**
  * Created by tiong on 7/24/14.

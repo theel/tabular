@@ -4,8 +4,10 @@
 
 import org.scalatest.FunSpec
 import org.scalatest.matchers.ShouldMatchers
-import tabular.QuerySupport._
+import tabular.core.{QuerySupport, DataFactory, Statement}
+import QuerySupport._
 import tabular._
+import tabular.core.{DataFactory, Statement}
 
 
 class QueryTest extends FunSpec with ShouldMatchers {

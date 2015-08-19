@@ -1,7 +1,8 @@
 import org.scalatest.FunSpec
 import org.scalatest.matchers.ShouldMatchers
 import tabular.ExprStructPrinter
-import tabular.Expresso._
+import tabular.expression._
+import Expresso._
 import tabular._
 
 /**

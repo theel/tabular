@@ -1,7 +1,9 @@
 package tabular
 
-import tabular.QuerySupport.{AliasSelect, AndFilterFunc, NamedSelect}
-import tabular.Tabular._
+import tabular.core._
+import QuerySupport.{AliasSelect, AndFilterFunc, NamedSelect}
+import tabular.core._
+import Tabular._
 
 
 class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
