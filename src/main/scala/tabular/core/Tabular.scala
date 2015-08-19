@@ -1,33 +1,53 @@
 package tabular.core
-
 import scala.collection.immutable.ListMap
 import tabular.core.Tabular._
 
 /**
- * Represent query state
+ * Tabular is an abstraction of table-like structure, which contains rows of data of type T.
+ * The data factory facilitate the data extraction from T. For example, if T is a Person type,
+ * data factory provides definition to extract attributes (firstName, lastName etc) from the Person type.
+ *
+ * The table-like structure provide a facility to compile a sql-like Statement into an executable Query
+ * @param dataFac the data factory
+ * @tparam T type of rows
+ */
+abstract class Tabular[T](val dataFac: DataFactory[T]) {
+
+  /**
+   * @return rows of data of type T
+   */
+  def rows(): Iterator[T]
+
+  /**
+   * Compile a Statement into an executable Query.
+   * @param stmt the statement
+   * @return query that can be executed and get result of the statement
+   */
+  def compile(stmt: Statement[T]): Query[T]
+
+}
+
+
+/**
+ * A DataFactory providers metadata and allow extraction of value by their field names
  * @tparam T
  */
-case class QuerySpec[T](val table: Table[T]) extends Cloneable {
-  var limit: Limit = null
-  var having: Seq[AFilterFunc[T]] = null
-  var orderbys: Seq[Symbol] = null
-  var selects: Seq[ASelectFunc[T]] = null
-  var filters: Seq[AFilterFunc[T]] = null
-  var groupbys: Seq[Symbol] = null
+
+abstract class DataFactory[T] {
+
+  case class Column[T, U: Manifest](val name: String, val select: (T) => U) {}
+
+  final def columnMap[String, Column[T, _]] = ListMap(getColumns().map(c => (c.name, c)): _*) //we need the ordering
+
+  def getColumns(): Seq[Column[T, _]]
+
+  def getColumnNames(): Seq[String] = columnMap.keys.toSeq
+
+  def getValue(value: T, s: String): Any
 }
 
 /**
- * Represent a query
- * @tparam T
- */
-class Query[T](val spec: QuerySpec[T], val exec: Execution) {
-  def execute(): View[Row] = {
-    exec.execute()
-  }
-}
-
-/**
- * Represent a statement. It wrap an query object and accumulate a QuerySpec
+ * Represent a statement that is declared against a table. It wrap an QuerySpec object and accumulate query states into the QuerySpec object
  * @tparam T
  */
 class Statement[T](val spec: QuerySpec[T]) {
@@ -43,7 +63,7 @@ class Statement[T](val spec: QuerySpec[T]) {
     return this
   }
 
-  def having(having: AFilterFunc[T]*): Statement[T] = {
+  def having(having: AFilterFunc[Row]*): Statement[T] = {
     assert(spec.having == null)
     spec.having = having
     return this
@@ -59,8 +79,40 @@ class Statement[T](val spec: QuerySpec[T]) {
 }
 
 /**
- * Selected represents a select operation on a table. It will instantiate a Query object to represent operations on that table.
- * Subsequent operation (where, groupby, orderby, having, limit) will accumulate the states in the Query object for compilation.
+ * Represent query state. It contains
+ * 1. The target table
+ * 2. select
+ * 3. filters
+ * 4. group by
+ * 5. having
+ * 6. order by
+ * 7. limit
+ * @tparam T the type T
+ */
+case class QuerySpec[T](val table: Table[T]) extends Cloneable {
+  var limit: Limit = null
+  var having: Seq[AFilterFunc[Row]] = null
+  var orderbys: Seq[Symbol] = null
+  var selects: Seq[ASelectFunc[T]] = null
+  var filters: Seq[AFilterFunc[T]] = null
+  var groupbys: Seq[Symbol] = null
+}
+
+/**
+ * Represent a query that is compiled. The query contains execution plan that can executed to get
+ * subsequent View[Row]
+ * @tparam T
+ */
+class Query[T](val spec: QuerySpec[T], val exec: Execution) {
+  def execute(): View[Row] = {
+    exec.execute()
+  }
+}
+
+
+/**
+ * Selected is always the first Statement created out of a table/view.
+ * Subsequent operation (where, groupby, orderby, having, limit) will accumulate the states in the QuerySpec object for compilation.
  * @param table the table the select is operating on
  * @param selects the select functions
  * @tparam T type of object in the table
@@ -96,14 +148,7 @@ class Selected[T](table: Table[T], selects: Seq[ASelectFunc[T]]) extends Stateme
 
 }
 
-abstract class Tabular[T](val dataFac: DataFactory[T]) {
 
-
-  def rows(): Iterator[T]
-
-  def compile(stmt: Statement[T]): Query[T]
-
-}
 
 /**
  * A view is table-like result after a query is executed
@@ -164,18 +209,6 @@ class ExecutionStep[This, That](val desc: String, prev: LazyStep[This], f: Tabul
   }
 }
 
-abstract class DataFactory[T] {
-
-  case class Column[T, U: Manifest](val name: String, val select: (T) => U) {}
-
-  final def columnMap[String, Column[T, _]] = ListMap(getColumns().map(c => (c.name, c)): _*) //we need the ordering
-
-  def getColumns(): Seq[Column[T, _]]
-
-  def getColumnNames(): Seq[String] = columnMap.keys.toSeq
-
-  def getValue(value: T, s: String): Any
-}
 
 object Tabular {
   type Func[T] = (T) => Any
