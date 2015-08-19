@@ -58,7 +58,7 @@ class QueryTest extends FunSpec with ShouldMatchers {
       val expected1 = data.map(p => (Seq(p, p))) //each row has single column of Person
       executeAndMatch(query1, expected1, Seq("field0"))
 
-      val query2 = table select ((p: Person) => p) //this uses implicit
+      val query2 = table select ((p: Person) => p) //thi s uses implicit
       val expected2 = data.map(p => (Seq(p))) //each row has single column of Person
       executeAndMatch(query2, expected2, Seq("field0"))
     }

@@ -18,7 +18,10 @@ object QuerySupport {
   implicit def anyValSelect[T](v: AnyVal): SelectFunc[T] = new AnyValSelect[T](v)
 
   // Symbol conversion
-  implicit def symbolSelect[T](s: Symbol): NamedSelect[T] = new NamedSelect[T](s.name)
+  implicit def symbolSelect[T](s: Symbol): ASelectFunc[T] = s.name match {
+    case "*" => new AllSelect[T]()
+    case _ => new NamedSelect[T](s.name)
+  }
 
   //Two hack to make this work:
   //1. No return type
