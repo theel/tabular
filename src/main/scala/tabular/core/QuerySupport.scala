@@ -18,7 +18,7 @@ object QuerySupport {
   // Symbol conversion
   implicit def symbolSelect[T](s: Symbol): SelectFunc[T] = s.name match {
     case "*" => new AllSelect[T]()
-    case _ => new NamedSelect[T](s.name)
+    case _ => new NamedSelect[T](s)
   }
 
   //Two hack to make this work:
@@ -48,7 +48,7 @@ object QuerySupport {
     override def apply(v1: T): Any = f.apply(v1)
   }
 
-  class NamedSelect[T](val name: String) extends DataFactorySelectFunc[T] {
+  class NamedSelect[T](val name: Symbol) extends DataFactorySelectFunc[T] {
     //NOTE: the fac from DataFactorySelectFunc need to be initialized by select
     var select: SelectFunc[T] = null
 
@@ -92,12 +92,12 @@ object QuerySupport {
   }
 
   class AliasSelect[T](func: SelectFunc[T], val id: Int = scala.util.Random.nextInt) extends SelectFunc[T] {
-    var name: String = null
+    var name: Symbol = null
 
     override def apply(v1: T): Any = func.apply(v1)
 
     def as(alias: Symbol): AliasSelect[T] = {
-      name = alias.name
+      name = alias
       this
     }
 

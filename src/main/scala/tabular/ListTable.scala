@@ -5,8 +5,14 @@ import QuerySupport.{AliasSelect, AndFilterFunc, NamedSelect}
 import tabular.core._
 import Tabular._
 
-
+/**
+ * A list implementation of tabular framework. The table wraps a list of T and allow executing sql query to it
+ * @param data a list of T
+ * @param fac the data factory for T
+ * @tparam T the type
+ */
 class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
+
   type RowkeyFunc = (Row) => Row
   type AggregateFunc = Seq[Row] => Row
 
@@ -16,17 +22,7 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
     }
   }
 
-  class RowDataFactory(fieldNames: Seq[String]) extends DataFactory[Row] {
-
-    val columns = fieldNames.zipWithIndex.map { case (name, index) => new Column[Row, Any](name, row => row(index))}
-
-    override def getColumns(): Seq[Column[Row, _]] = columns
-
-    override def getValue(value: Row, s: String): Any = ???
-  }
-
   class SimpleAggregateFunc extends AggregateFunc {
-
     def apply(data: Seq[Row]): Row = {
       val results = data.reduce((a: Row, b: Row) => {
         a.zip(b).map(t => if (classOf[Aggregate[Int]].isInstance(t._1)) {
@@ -40,19 +36,20 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
 
   override def compile(stmt: Statement[T]): Query[T] = {
     val spec = stmt.spec
+
     val filteredData = if (spec.filters != null) {
       data.filter(new AndFilterFunc[T](spec.filters.asInstanceOf[Seq[FilterFunc[T]]]))
     } else {
       data
     }
-    val selectFieldNames: List[String] = spec.selects.zipWithIndex.map {
+    val selectFieldNames: List[Symbol] = spec.selects.zipWithIndex.map {
       case (value, index) => value match {
         case sym: NamedSelect[T] =>
           sym.name
         case alias: AliasSelect[T] =>
           alias.name
         case default =>
-          "field%d".format(index)
+          Symbol("field%d".format(index))
       }
     }.toList
     val selects = spec.selects.asInstanceOf[Seq[SelectFunc[T]]]
@@ -101,17 +98,17 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
     }
 
     //TODO: WIP regarding execution step
-    val step1 = new IdentityStep[Row](new ListView[Row](ordered.toSeq, new RowDataFactory(selectFieldNames)))
+    val step1 = new IdentityStep[Row](new ListView[Row](ordered.toSeq, new RowDataFactory(selectFieldNames.map(_.name))))
     val step2 = new ExecutionStep[Row, Row]("Step2", step1, _.asInstanceOf[View[Row]])
     new Query(spec, new Execution(step2))
   }
 
-  def getIndices(fieldNames: List[String], names: Seq[Symbol]): Seq[Int] = {
-    val indices = names.map(symbol => fieldNames.indexOf(symbol.name))
+  def getIndices(fieldNames: List[Symbol], names: Seq[Symbol]): Seq[Int] = {
+    val indices = names.map(symbol => fieldNames.indexOf(symbol))
     val notFoundIndices = indices.zipWithIndex.filter(_._1 == -1).map(_._2) //find anything that doesn't have mapping in select
     if (notFoundIndices.size > 0) {
       val fieldNames = notFoundIndices.map(names(_))
-      throw new IllegalArgumentException("Unknown fields %s".format(fieldNames.mkString(",")))
+      throw new IllegalArgumentException("Unknown fields %s. Possible fields = %s".format(fieldNames.mkString(","), names.mkString(",")))
     }
     indices
   }

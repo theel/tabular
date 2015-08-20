@@ -24,7 +24,7 @@ class QueryTest extends FunSpec with ShouldMatchers {
       new Column[Person, Int]("age", _.age) //
     )
 
-    override def getValue(value: Person, s: String): Any = ???
+    override def getValue(value: Person, s: Symbol): Any = ???
   }
 
   val data = Seq(//

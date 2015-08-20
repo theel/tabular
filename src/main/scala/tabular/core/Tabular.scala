@@ -17,10 +17,6 @@ abstract class Tabular[T](val dataFac: DataFactory[T]) {
   def select(selects: SelectFunc[T]*): Selected[T] = {
     new Selected[T](this, selects)
   }
-//
-//  def select_(selects: SelectFunc[T]*): Selected[T] = {
-//    new Selected[T](this, selects)
-//  }
 
   class FuncSelect[T](f: (T) => Any) extends SelectFunc[T] {
     override def apply(v1: T): Any = f.apply(v1)
@@ -50,13 +46,13 @@ abstract class DataFactory[T] {
 
   case class Column[T, U: Manifest](val name: String, val select: (T) => U) {}
 
-  final def columnMap[String, Column[T, _]] = ListMap(getColumns().map(c => (c.name, c)): _*) //we need the ordering
+  final def columnMap[Symbol, Column[T, _]] = ListMap(getColumns().map(c => (Symbol(c.name), c)): _*) //we need the ordering
 
   def getColumns(): Seq[Column[T, _]]
 
-  def getColumnNames(): Seq[String] = columnMap.keys.toSeq
+  def getColumnNames(): Seq[String] = columnMap.keys.map(_.name).toSeq
 
-  def getValue(value: T, s: String): Any
+  def getValue(value: T, s: Symbol): Any
 }
 
 /**
@@ -167,7 +163,7 @@ class Selected[T](table: Tabular[T], selects: Seq[SelectFunc[T]]) extends Statem
  * A view is table-like result after a query is executed
  * @tparam T
  */
-abstract class View[T](val df: DataFactory[T]) extends Tabular[T](df) {}
+abstract class View[T](val df: DataFactory[T]) extends Tabular[T](df)
 
 //TODO: fix data factory
 
@@ -175,9 +171,7 @@ abstract class View[T](val df: DataFactory[T]) extends Tabular[T](df) {}
  * The table is abstraction of queryable source.
  * @tparam T
  */
-abstract class Table[T](val fac: DataFactory[T]) extends Tabular[T](fac) {
-
-}
+abstract class Table[T](val fac: DataFactory[T]) extends Tabular[T](fac)
 
 
 abstract class LazyStep[That] {
@@ -203,10 +197,29 @@ class ExecutionStep[This, That](val desc: String, prev: LazyStep[This], f: Tabul
 
 
 object Tabular {
-  type Func[T] = (T) => Any
+
+  /**
+   * Represent a select function
+   * @tparam T
+   */
   type SelectFunc[T] = (T) => Any
 
+  /**
+   * Represent a filter function
+   * @tparam T
+   */
+  type FilterFunc[T] = (T) => Boolean
 
+  /**
+   * Represent limit
+   */
+  type Limit = (Int, Int)
+
+
+  /**
+   * A select function that directly interact with DataFactory
+   * @tparam T
+   */
   abstract class DataFactorySelectFunc[T] extends SelectFunc[T] {
     var fac: DataFactory[T] = null
 
@@ -218,21 +231,44 @@ object Tabular {
     def validate()
   }
 
-  type FilterFunc[T] = (T) => Boolean
-
-  //  abstract class GroupFunc[T] extends Func[T]
-
-  //  abstract class OrderFunc[T] extends Func[T]
-
+  /**
+   * Represent a row
+   */
   type Row = Seq[Any]
+
+  /**
+   * Represent row tuples
+   */
   type RowTuple = (Row, Row)
+
+  /**
+   * Represent a grouped tuples
+   */
   type GroupedRows = (Row, Seq[Row])
-  type Limit = (Int, Int)
+
+
+  /**
+   * A generic data factory operating on Row object
+   */
+  class RowDataFactory(fieldNames: Seq[String]) extends DataFactory[Row] {
+
+    /** name-column mappings **/
+    val nameToColumns = fieldNames.zipWithIndex.map { case (name, index) => (Symbol(name), new Column[Row, Any](name, row => row(index)))}.toMap
+
+    /** the columns **/
+    val columns = nameToColumns.values.toSeq
+
+    /** get the columns **/
+    override def getColumns(): Seq[Column[Row, _]] = columns
+
+    override def getValue(value: Row, s: Symbol): Any = nameToColumns(s).select.apply(value)
+  }
 
   case class Aggregate[T](data: T, f: (T, T) => T) {
     def aggregate(that: Aggregate[T]): Aggregate[T] = {
       new Aggregate(f.apply(data, that.data), f)
     }
   }
+
 
 }
