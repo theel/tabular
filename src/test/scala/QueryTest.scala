@@ -4,9 +4,8 @@
 
 import org.scalatest.FunSpec
 import org.scalatest.matchers.ShouldMatchers
-import tabular.core.{QuerySupport, DataFactory, Statement}
-import QuerySupport._
 import tabular._
+import tabular.core.QuerySupport._
 import tabular.core.{DataFactory, Statement}
 
 
@@ -56,7 +55,7 @@ class QueryTest extends FunSpec with ShouldMatchers {
   describe("Tabular query") {
 
     it("should allow identity select") {
-      val query1 = table select_(p => p, (p: Person) => p)
+      val query1 = table select(p => p, (p: Person) => p)
       val expected1 = data.map(p => (Seq(p, p))) //each row has single column of Person
       executeAndMatch(query1, expected1, Seq("field0"))
 
@@ -66,7 +65,7 @@ class QueryTest extends FunSpec with ShouldMatchers {
     }
 
     it("should allow select with func") {
-      val query1 = table select_(_.firstName, _.age > 65)
+      val query1 = table select(_.firstName, _.age > 65)
       val expected1 = data.map(p => Seq(p.firstName, p.age > 65))
       executeAndMatch(query1, expected1, Seq("firstName", "field1"))
 
@@ -75,7 +74,7 @@ class QueryTest extends FunSpec with ShouldMatchers {
     }
 
     it("should allow select with literals") {
-      val query1 = table select_("test", 1, 1 + 1)
+      val query1 = table select("test", 1, 1 + 1)
       val expected1 = data.map(p => Seq("test", 1, 2))
       executeAndMatch(query1, expected1, Seq("field0", "field1", "field2"))
     }
@@ -100,20 +99,20 @@ class QueryTest extends FunSpec with ShouldMatchers {
     }
 
     it("should select with filter func") {
-      val query1 = table select_(_.firstName, _.lastName, _.age) where_ (_.age > 65)
+      val query1 = table select(_.firstName, _.lastName, _.age) where_ (_.age > 65)
       val expected1 = data.filter(_.age > 65).map(p => Seq(p.firstName, p.lastName, p.age))
       executeAndMatch(query1, expected1, Seq("field0", "field1", "field2"))
     }
 
     it("should select with complex filter func") {
       val filterFunc = (p: Person) => (p.firstName == "John" && p.age > 65) || p.lastName == "Smith"
-      val query1 = table select_(_.firstName, _.lastName, _.age) where_ (filterFunc)
+      val query1 = table select(_.firstName, _.lastName, _.age) where_ (filterFunc)
       val expected1 = data.filter(filterFunc).map(p => Seq(p.firstName, p.lastName, p.age))
       executeAndMatch(query1, expected1, Seq("field0", "field1", "field2"))
     }
 
     it("should select with multiple filter funcs") {
-      val query1 = table select_(_.firstName, _.lastName, _.age) where_(_.firstName == "John", _.age > 65)
+      val query1 = table select(_.firstName, _.lastName, _.age) where_(_.firstName == "John", _.age > 65)
       val expected1 = data.filter(p => p.firstName == "John" && p.age > 65).map(p => Seq(p.firstName, p.lastName, p.age))
       executeAndMatch(query1, expected1, Seq("field0", "field1", "field2"))
     }

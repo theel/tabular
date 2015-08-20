@@ -9,16 +9,14 @@ object QuerySupport {
 
   //** Select support **
   // Func conversion
-  implicit def funcSelect[T](p: (T) => Any): ASelectFunc[T] = new FuncSelect[T](p)
+  implicit def funcSelect[T](p: (T) => Any): SelectFunc[T] = new FuncSelect[T](p)
 
   // Literal conversion
-  implicit def stringSelectA[T](v: String): ASelectFunc[T] = new StringLiteralSelect[T](v)
   implicit def stringSelect[T](v: String): SelectFunc[T] = new StringLiteralSelect[T](v)
-  implicit def anyValSelectA[T](v: AnyVal): ASelectFunc[T] = new AnyValSelect[T](v)
   implicit def anyValSelect[T](v: AnyVal): SelectFunc[T] = new AnyValSelect[T](v)
 
   // Symbol conversion
-  implicit def symbolSelect[T](s: Symbol): ASelectFunc[T] = s.name match {
+  implicit def symbolSelect[T](s: Symbol): SelectFunc[T] = s.name match {
     case "*" => new AllSelect[T]()
     case _ => new NamedSelect[T](s.name)
   }
@@ -38,7 +36,7 @@ object QuerySupport {
 
   //** Filter support **
   //  implicit def simpleFilterToComposite[T](f: FilterFunc[T]): CompositeFilterFunc[T] = new CompositeFilterFunc[T](f)
-  implicit def symbolFilter[T](s: Symbol): SymbolFilterFunc[T] = new SymbolFilterFunc[T](s.name)
+//  implicit def symbolFilter[T](s: Symbol): SymbolFilterFunc[T] = new SymbolFilterFunc[T](s.name)
 
   //  def ^[T](s: Symbol): SymbolFilterFunc[T] = new SymbolFilterFunc[T](s.name)
 
@@ -46,7 +44,7 @@ object QuerySupport {
   //** Groupby support **
 
   //** Select functions ***
-  class FuncSelect[T](f: (T) => Any) extends ASelectFunc[T] with SelectFunc[T] {
+  class FuncSelect[T](f: (T) => Any) extends SelectFunc[T] {
     override def apply(v1: T): Any = f.apply(v1)
   }
 
@@ -68,11 +66,11 @@ object QuerySupport {
       }
     }
 
-    def +(that: Any): ASelectFunc[T] = {
+    def +(that: Any): SelectFunc[T] = {
       this //TODO: finish this
     }
 
-    def >(that: Any): ASelectFunc[T] = {
+    def >(that: Any): SelectFunc[T] = {
       this //TODO: finish this
     }
   }
@@ -93,7 +91,7 @@ object QuerySupport {
     }
   }
 
-  class AliasSelect[T](func: SelectFunc[T], val id: Int = scala.util.Random.nextInt) extends ASelectFunc[T] with SelectFunc[T] {
+  class AliasSelect[T](func: SelectFunc[T], val id: Int = scala.util.Random.nextInt) extends SelectFunc[T] {
     var name: String = null
 
     override def apply(v1: T): Any = func.apply(v1)
@@ -109,17 +107,17 @@ object QuerySupport {
   }
 
   //support select ("any string")
-  class StringLiteralSelect[T](v: String) extends ASelectFunc[T] with SelectFunc[T] {
+  class StringLiteralSelect[T](v: String) extends SelectFunc[T] {
     override def apply(v1: T): Any = v
   }
 
   //support select (1, 0.1)
-  class AnyValSelect[T](v: AnyVal) extends ASelectFunc[T] with SelectFunc[T] {
+  class AnyValSelect[T](v: AnyVal) extends SelectFunc[T] {
     override def apply(v1: T): Any = v
   }
 
   //support select (sum(_.age))
-  class SumSelect[T](f: SelectFunc[T]) extends ASelectFunc[T] with SelectFunc[T] {
+  class SumSelect[T](f: SelectFunc[T]) extends SelectFunc[T] {
     override def apply(v1: T): Any = {
       val value = f.apply(v1)
       new Aggregate[Int](value.asInstanceOf[Int], (a, b) => a + b)
@@ -132,7 +130,7 @@ object QuerySupport {
 
   //** Filter Func **
   //a placeholder for complex filter func
-  class CompositeFilterFunc[T](val first: FilterFunc[T]) extends AFilterFunc[T] with FilterFunc[T] {
+  class CompositeFilterFunc[T](val first: FilterFunc[T]) extends FilterFunc[T] {
     override def apply(v1: T): Boolean = ??? //not meant to be implemented
 
 
@@ -145,14 +143,14 @@ object QuerySupport {
     }
   }
 
-  class AndFilterFunc[T](val filters: Seq[FilterFunc[T]]) extends AFilterFunc[T] with FilterFunc[T] {
+  class AndFilterFunc[T](val filters: Seq[FilterFunc[T]]) extends FilterFunc[T] {
     override def apply(v1: T): Boolean = {
       filters.foreach(filter => if (!filter.apply(v1)) return false)
       return true
     }
   }
 
-  class OrFilterFunc[T](val filters: Seq[FilterFunc[T]]) extends AFilterFunc[T] with FilterFunc[T] {
+  class OrFilterFunc[T](val filters: Seq[FilterFunc[T]]) extends FilterFunc[T] {
     override def apply(v1: T): Boolean = {
       filters.foreach(filter => if (filter.apply(v1)) return true)
       return false
@@ -160,47 +158,47 @@ object QuerySupport {
   }
 
   //this is just part of filter
-  class SymbolFilterFunc[T](val name: String) extends AFilterFunc[T] with FilterFunc[T] {
+  class SymbolFilterFunc[T](val name: String) extends FilterFunc[T] {
     var op: String = null
     var rhs: Any = null
 
     override def apply(v1: T): Boolean = ???
 
-    def >(that: Any): AFilterFunc[T] = new GreaterThan[T](name, that)
+    def >(that: Any): FilterFunc[T] = new GreaterThan[T](name, that)
 
-    def >=(that: Any): AFilterFunc[T] = new GreaterThanEqual[T](name, that)
+    def >=(that: Any): FilterFunc[T] = new GreaterThanEqual[T](name, that)
 
     //    def ==(that: Any): AFilterFunc[T] = new Equal(name, that)
 
     //    def !=(that: Any): AFilterFunc[T] = new NotEqual(name, that)
 
-    def <(that: Any): AFilterFunc[T] = new LessThan[T](name, that)
+    def <(that: Any): FilterFunc[T] = new LessThan[T](name, that)
 
-    def <=(that: Any): AFilterFunc[T] = new LessThanEqual[T](name, that)
+    def <=(that: Any): FilterFunc[T] = new LessThanEqual[T](name, that)
   }
 
-  class GreaterThan[T](val name: String, val that: Any) extends AFilterFunc[T] with FilterFunc[T] {
+  class GreaterThan[T](val name: String, val that: Any) extends FilterFunc[T] {
     override def apply(v1: T): Boolean = ???
   }
 
 
-  class GreaterThanEqual[T](val name: String, val that: Any) extends AFilterFunc[T] with FilterFunc[T] {
+  class GreaterThanEqual[T](val name: String, val that: Any) extends FilterFunc[T] {
     override def apply(v1: T): Boolean = ???
   }
 
-  class Equal[T](val name: String, val that: Any) extends AFilterFunc[T] with FilterFunc[T] {
+  class Equal[T](val name: String, val that: Any) extends FilterFunc[T] {
     override def apply(v1: T): Boolean = ???
   }
 
-  class NotEqual[T](val name: String, val that: Any) extends AFilterFunc[T] with FilterFunc[T] {
+  class NotEqual[T](val name: String, val that: Any) extends FilterFunc[T] {
     override def apply(v1: T): Boolean = ???
   }
 
-  class LessThan[T](val name: String, val that: Any) extends AFilterFunc[T] with FilterFunc[T] {
+  class LessThan[T](val name: String, val that: Any) extends FilterFunc[T] {
     override def apply(v1: T): Boolean = ???
   }
 
-  class LessThanEqual[T](val name: String, val that: Any) extends AFilterFunc[T] with FilterFunc[T] {
+  class LessThanEqual[T](val name: String, val that: Any) extends FilterFunc[T] {
     override def apply(v1: T): Boolean = ???
   }
 

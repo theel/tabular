@@ -13,6 +13,19 @@ import tabular.core.Tabular._
  */
 abstract class Tabular[T](val dataFac: DataFactory[T]) {
 
+
+  def select(selects: SelectFunc[T]*): Selected[T] = {
+    new Selected[T](this, selects)
+  }
+//
+//  def select_(selects: SelectFunc[T]*): Selected[T] = {
+//    new Selected[T](this, selects)
+//  }
+
+  class FuncSelect[T](f: (T) => Any) extends SelectFunc[T] {
+    override def apply(v1: T): Any = f.apply(v1)
+  }
+
   /**
    * @return rows of data of type T
    */
@@ -63,7 +76,7 @@ class Statement[T](val spec: QuerySpec[T]) {
     return this
   }
 
-  def having(having: AFilterFunc[Row]*): Statement[T] = {
+  def having(having: FilterFunc[Row]*): Statement[T] = {
     assert(spec.having == null)
     spec.having = having
     return this
@@ -89,12 +102,12 @@ class Statement[T](val spec: QuerySpec[T]) {
  * 7. limit
  * @tparam T the type T
  */
-case class QuerySpec[T](val table: Table[T]) extends Cloneable {
+case class QuerySpec[T](val table: Tabular[T]) extends Cloneable {
   var limit: Limit = null
-  var having: Seq[AFilterFunc[Row]] = null
+  var having: Seq[FilterFunc[Row]] = null
   var orderbys: Seq[Symbol] = null
-  var selects: Seq[ASelectFunc[T]] = null
-  var filters: Seq[AFilterFunc[T]] = null
+  var selects: Seq[SelectFunc[T]] = null
+  var filters: Seq[FilterFunc[T]] = null
   var groupbys: Seq[Symbol] = null
 }
 
@@ -117,7 +130,7 @@ class Query[T](val spec: QuerySpec[T], val exec: Execution) {
  * @param selects the select functions
  * @tparam T type of object in the table
  */
-class Selected[T](table: Table[T], selects: Seq[ASelectFunc[T]]) extends Statement[T](new QuerySpec[T](table)) {
+class Selected[T](table: Tabular[T], selects: Seq[SelectFunc[T]]) extends Statement[T](new QuerySpec[T](table)) {
   spec.selects = selects
   selects.foreach(f => f match {
     case s: DataFactorySelectFunc[T] =>
@@ -131,7 +144,7 @@ class Selected[T](table: Table[T], selects: Seq[ASelectFunc[T]]) extends Stateme
    * @param filters
    * @return
    */
-  def where(filters: AFilterFunc[T]*): Statement[T] = {
+  def where(filters: FilterFunc[T]*): Statement[T] = {
     spec.filters = filters //TODO: build for immutability
     new Statement(spec)
   }
@@ -142,7 +155,7 @@ class Selected[T](table: Table[T], selects: Seq[ASelectFunc[T]]) extends Stateme
    * @return
    */
   def where_(filters: FilterFunc[T]*): Statement[T] = {
-    spec.filters = filters.asInstanceOf[Seq[AFilterFunc[T]]] //TODO: build for immutability
+    spec.filters = filters.asInstanceOf[Seq[FilterFunc[T]]] //TODO: build for immutability
     new Statement(spec)
   }
 
@@ -163,27 +176,6 @@ abstract class View[T](val df: DataFactory[T]) extends Tabular[T](df) {}
  * @tparam T
  */
 abstract class Table[T](val fac: DataFactory[T]) extends Tabular[T](fac) {
-
-  def select(selects: ASelectFunc[T]*): Selected[T] = {
-    new Selected[T](this, selects)
-  }
-
-  def select_(selects: SelectFunc[T]*): Selected[T] = {
-    new Selected[T](this, mapOrWrap(selects))
-  }
-
-  class FuncSelect[T](f: (T) => Any) extends ASelectFunc[T] with SelectFunc[T] {
-    override def apply(v1: T): Any = f.apply(v1)
-  }
-
-  def mapOrWrap(selects: Seq[SelectFunc[T]]): Seq[ASelectFunc[T]] = {
-    selects.map { func =>
-      func match {
-        case a: ASelectFunc[T] => a
-        case default => new FuncSelect[T](func)
-      }
-    }
-  }
 
 }
 
@@ -215,7 +207,7 @@ object Tabular {
   type SelectFunc[T] = (T) => Any
 
 
-  abstract class DataFactorySelectFunc[T] extends ASelectFunc[T] with SelectFunc[T] {
+  abstract class DataFactorySelectFunc[T] extends SelectFunc[T] {
     var fac: DataFactory[T] = null
 
     def setDataFactory(fac: DataFactory[T]) = {
@@ -227,10 +219,6 @@ object Tabular {
   }
 
   type FilterFunc[T] = (T) => Boolean
-
-  trait ASelectFunc[T]
-
-  trait AFilterFunc[T]
 
   //  abstract class GroupFunc[T] extends Func[T]
 
