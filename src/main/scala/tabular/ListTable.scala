@@ -1,9 +1,9 @@
 package tabular
 
+import tabular.core.QuerySupport.AndFilterFunc
+import tabular.core.Tabular._
 import tabular.core._
-import QuerySupport.{AliasSelect, AndFilterFunc, NamedSelect}
-import tabular.core._
-import Tabular._
+import tabular.util.RowSorter
 
 /**
  * A list implementation of tabular framework. The table wraps a list of T and allow executing sql query to it
@@ -37,26 +37,19 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
   override def compile(stmt: Statement[T]): Query[T] = {
     val spec = stmt.spec
 
+    //step 1 - filter
     val filteredData = if (spec.filters != null) {
       data.filter(new AndFilterFunc[T](spec.filters.asInstanceOf[Seq[FilterFunc[T]]]))
     } else {
       data
     }
-    val selectFieldNames: List[Symbol] = spec.selects.zipWithIndex.map {
-      case (value, index) => value match {
-        case sym: NamedSelect[T] =>
-          sym.name
-        case alias: AliasSelect[T] =>
-          alias.name
-        case default =>
-          Symbol("field%d".format(index))
-      }
-    }.toList
-    val selects = spec.selects.asInstanceOf[Seq[SelectFunc[T]]]
-    val selectedGroupedData = if (spec.groupbys != null) {
-      //first select
-      val selectedData = filteredData.map(t => selects.map(_.apply(t)))
 
+    //step 2 - project
+    val selectedData = filteredData.map(t => spec.selects.map(_.apply(t)))
+    val selectFieldNames = spec.getSelectFieldNames
+
+    //step 3 - group
+    val selectedGroupedData = if (spec.groupbys != null) {
       //the group by
       val groupIndices: Seq[Int] = getIndices(selectFieldNames, spec.groupbys)
       val groupData = selectedData.groupBy(new IndicesRowkeyFunc(groupIndices))
@@ -64,34 +57,13 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
       aggregatedData
       //TODO: implement having
     } else {
-      val selectedData = filteredData.map(t => selects.map(_.apply(t)))
       selectedData
     }
     //TODO: ordering, and limit
     val ordered = if (spec.orderbys != null) {
       val sortIndices = getIndices(selectFieldNames, spec.orderbys)
-      val sortFunc = (a: Row, b: Row) => {
-        var lt = false
-        var i = 0
-        val n=sortIndices.size
-        while (!lt && i < n){
-          val aValue = a(i)
-          val bValue = b(i)
-          val compared = aValue match {
-            case compA: Comparable[AnyRef] =>
-              compA.compareTo(bValue.asInstanceOf[AnyRef])
-            case orderA: Ordered[AnyRef] =>
-              orderA.compareTo(bValue.asInstanceOf[AnyRef])
-            case default =>
-              throw new IllegalArgumentException("Unknown sorting value " + aValue + " and " + bValue)
-          }
-          lt = compared < 0
-          i += 1
-        }
-        lt
-      }
       selectedGroupedData.toSeq.sortWith {
-        sortFunc
+        new RowSorter(sortIndices)
       }
     } else {
       selectedGroupedData

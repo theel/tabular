@@ -1,6 +1,9 @@
 package tabular.core
-import scala.collection.immutable.ListMap
+
+import tabular.core.QuerySupport.{AliasSelect, NamedSelect}
 import tabular.core.Tabular._
+
+import scala.collection.immutable.ListMap
 
 /**
  * Tabular is an abstraction of table-like structure, which contains rows of data of type T.
@@ -105,6 +108,18 @@ case class QuerySpec[T](val table: Tabular[T]) extends Cloneable {
   var selects: Seq[SelectFunc[T]] = null
   var filters: Seq[FilterFunc[T]] = null
   var groupbys: Seq[Symbol] = null
+
+  def getSelectFieldNames: List[Symbol] = selects.zipWithIndex.map {
+    case (value, index) => value match {
+      case sym: NamedSelect[T] =>
+        sym.name
+      case alias: AliasSelect[T] =>
+        alias.name
+      case default =>
+        Symbol("field%d".format(index))
+    }
+  }.toList
+
 }
 
 /**
@@ -194,7 +209,6 @@ class ExecutionStep[This, That](val desc: String, prev: LazyStep[This], f: Tabul
     results
   }
 }
-
 
 object Tabular {
 
