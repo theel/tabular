@@ -39,8 +39,8 @@ class QueryTest extends FunSpec with ShouldMatchers {
 
   def executeAndMatch(query: Statement[Person], expected: Seq[Seq[Any]], columns: Seq[String]) = {
     println("")
-    val results = query.compile().execute()
-    results.dataFac.getColumns()
+    val results = query.compile().materialize()
+    results.fac.getColumns()
     val resultSeq = results.rows().toSeq
     println("==== Results =========")
     //    println(resultSeq.map(row => row.map(_.getClass)))

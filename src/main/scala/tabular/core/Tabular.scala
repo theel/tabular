@@ -2,7 +2,8 @@ package tabular.core
 
 import tabular.core.QuerySupport.{AliasSelect, NamedSelect}
 import tabular.core.Tabular._
-
+import tabular.execution._
+import tabular.util.{RowSorter, Utils}
 import scala.collection.immutable.ListMap
 
 /**
@@ -15,7 +16,6 @@ import scala.collection.immutable.ListMap
  * @tparam T type of rows
  */
 abstract class Tabular[T](val dataFac: DataFactory[T]) {
-
 
   def select(selects: SelectFunc[T]*): Selected[T] = {
     new Selected[T](this, selects)
@@ -35,7 +35,7 @@ abstract class Tabular[T](val dataFac: DataFactory[T]) {
    * @param stmt the statement
    * @return query that can be executed and get result of the statement
    */
-  def compile(stmt: Statement[T]): Query[T]
+  def compile[U](stmt: Statement[T], rowFac: RowFactory[U] = new DefaultRowFactory): View[U]
 
 }
 
@@ -87,7 +87,7 @@ class Statement[T](val spec: QuerySpec[T]) {
     return this
   }
 
-  def compile(): Query[T] = spec.table.compile(this)
+  def compile(): View[Row] = spec.table.compile(this)
 }
 
 /**
@@ -120,17 +120,6 @@ case class QuerySpec[T](val table: Tabular[T]) extends Cloneable {
     }
   }.toList
 
-}
-
-/**
- * Represent a query that is compiled. The query contains execution plan that can executed to get
- * subsequent View[Row]
- * @tparam T
- */
-class Query[T](val spec: QuerySpec[T], val exec: Execution) {
-  def execute(): View[Row] = {
-    exec.execute()
-  }
 }
 
 
@@ -174,11 +163,14 @@ class Selected[T](table: Tabular[T], selects: Seq[SelectFunc[T]]) extends Statem
 
 
 
+
 /**
  * A view is table-like result after a query is executed
  * @tparam T
  */
-abstract class View[T](val df: DataFactory[T]) extends Tabular[T](df)
+abstract class View[T](fac: DataFactory[T], val plan: ExecutionPlan[Table[T]]) extends Tabular[T](fac) {
+  def materialize(): Table[T]
+}
 
 //TODO: fix data factory
 
@@ -189,26 +181,23 @@ abstract class View[T](val df: DataFactory[T]) extends Tabular[T](df)
 abstract class Table[T](val fac: DataFactory[T]) extends Tabular[T](fac)
 
 
-abstract class LazyStep[That] {
-  def execute(): Tabular[That]
-}
-
-class IdentityStep[That](that: Tabular[That]) extends LazyStep[That] {
-  def execute(): Tabular[That] = {
-    that
-  }
-}
-
-class Execution(val steps: ExecutionStep[_, Row]) {
-  def execute(): View[Row] = steps.execute()
-}
-
-class ExecutionStep[This, That](val desc: String, prev: LazyStep[This], f: Tabular[This] => View[That]) extends LazyStep[That] {
-  def execute(): View[That] = {
-    val results = f.apply(prev.execute())
-    results
-  }
-}
+//abstract class Step[That] {
+//  def execute(): That
+//}
+//
+//class IdentityStep[That](that: That) extends Step[That] {
+//  def execute(): That = that
+//}
+//
+//class ExecutionPlan[T](val spec: QuerySpec[T], val step: Step[T]) {
+//  def execute(): T = step.execute()
+//}
+//
+//class ExecutionStep[This, That](val desc: String, prev: Step[This], f: (This) => That) extends Step[That] {
+//  def execute(): That = {
+//    f.apply(prev.execute())
+//  }
+//}
 
 object Tabular {
 
@@ -284,5 +273,66 @@ object Tabular {
     }
   }
 
+  abstract class RowFactory[U] {
+    def createDataFactory[T](spec: QuerySpec[T]): DataFactory[U]
 
+    def sort[T](spec: QuerySpec[T], data: Seq[U]): Seq[U]
+
+    def groupBy[T](spec: QuerySpec[T], data: Seq[U]): Seq[U]
+
+    def createRow[T](spec: QuerySpec[T], value: T): U
+  }
+
+  class DefaultRowFactory extends RowFactory[Row] {
+
+    type RowkeyFunc = (Row) => Row
+
+    type AggregateFunc = Seq[Row] => Row
+
+    class SimpleAggregateFunc extends AggregateFunc {
+      def apply(data: Seq[Row]): Row = {
+        val results = data.reduce((a: Row, b: Row) => {
+          a.zip(b).map(t => if (classOf[Aggregate[Int]].isInstance(t._1)) {
+            t._1.asInstanceOf[Aggregate[Int]].aggregate(t._2.asInstanceOf[Aggregate[Int]])
+          } else t._1)
+        })
+        results.map(a => if (classOf[Aggregate[Int]].isInstance(a)) a.asInstanceOf[Aggregate[Int]].data else a)
+      }
+    }
+
+    class IndicesRowkeyFunc(indicies: Seq[Int]) extends RowkeyFunc {
+      override def apply(v1: Row): Row = {
+        indicies.map(v1(_))
+      }
+    }
+
+    override def createRow[T](spec: QuerySpec[T], value: T): Row  = spec.selects.map(_.apply(value))
+
+    override def groupBy[T](spec: QuerySpec[T], data: Seq[Row]): Seq[Row] = {
+      val groupIndices: Seq[Int] = Utils.getIndices(spec.getSelectFieldNames, spec.groupbys)
+      val groupData = data.groupBy(new IndicesRowkeyFunc(groupIndices))
+      val aggregatedData = groupData.map(t => aggregate(t._2))
+      aggregatedData.toSeq
+    }
+
+    private def aggregate(data: Seq[Row]): Row = {
+      val results = data.reduce((a: Row, b: Row) => {
+        a.zip(b).map(t => if (classOf[Aggregate[Int]].isInstance(t._1)) {
+          t._1.asInstanceOf[Aggregate[Int]].aggregate(t._2.asInstanceOf[Aggregate[Int]])
+        } else t._1)
+      })
+      results.map(a => if (classOf[Aggregate[Int]].isInstance(a)) a.asInstanceOf[Aggregate[Int]].data else a)
+    }
+
+    override def sort[T](spec: QuerySpec[T], data: Seq[Row]): Seq[Row] = {
+      val sortIndices = Utils.getIndices(spec.getSelectFieldNames, spec.orderbys)
+      data.sortWith {
+        new RowSorter(sortIndices)
+      }
+    }
+
+    override def createDataFactory[T](spec: QuerySpec[T]): DataFactory[Row] = {
+      new RowDataFactory(spec.getSelectFieldNames.map(_.name))
+    }
+  }
 }
