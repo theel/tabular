@@ -21,7 +21,7 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
     val selectFieldNames = spec.getSelectFieldNames
     val fac = rowFactory.createDataFactory(spec)
     val plan = Plan[Table[U]]("Plan for " + stmt.toString) {
-      Step[Seq[T]]("Identity step"){
+      Step[Seq[T]]("Identity step") {
         data
       }
       //step 1 - filter
@@ -32,7 +32,7 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
       }
 
       //step 2 - project
-      Step[Seq[T], Seq[U]]("Selecting fields"){
+      Step[Seq[T], Seq[U]]("Selecting fields") {
         _.map(t => rowFactory.createRow(spec, t))
       }
 
@@ -46,12 +46,12 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
       }
       //TODO: ordering, and limit
       if (spec.orderbys != null) {
-        Step[Seq[U],Seq[U]]("Order by") {
+        Step[Seq[U], Seq[U]]("Order by") {
           rowFactory.sort(spec, _)
         }
       }
 
-      Step[Seq[U], Table[U]]("Finalize"){
+      Step[Seq[U], Table[U]]("Finalize") {
         new ListTable[U](_, fac)
       }
     }
@@ -60,6 +60,11 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
   }
 
   override def rows(): Iterator[T] = data.iterator
+
+  override def join[U](tab: Tabular[U]): JoinedTabular[T, U] = ???
+//  {
+//    new ListJoinedTabular[T, U](this, tab);
+//  }
 }
 
 class ListView[T](fac: DataFactory[T], plan: ExecutionPlan[Table[T]]) extends View[T](fac, plan) {
@@ -77,4 +82,16 @@ class ListView[T](fac: DataFactory[T], plan: ExecutionPlan[Table[T]]) extends Vi
   }
 
   override def materialize(): Table[T] = impl
+
+  override def join[U](tab: Tabular[U]): JoinedTabular[T, U] = impl.join(tab)
+}
+
+abstract class ListJoinedTabular[T, U](tab1: Tabular[T], tab2: Tabular[U]) extends JoinedTabular[T, U](tab1, tab2) {
+  /**
+   * @return rows of data of type T
+   */
+  override def rows(): Iterator[(T, U)] = ???
+
+  override def join[V](tab: Tabular[V]): JoinedTabular[(T, U), V] = ???
+
 }

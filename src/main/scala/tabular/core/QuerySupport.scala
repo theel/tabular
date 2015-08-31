@@ -117,11 +117,21 @@ object QuerySupport {
   }
 
   //support select (sum(_.age))
-  class SumSelect[T](f: SelectFunc[T]) extends SelectFunc[T] {
+  class SumSelect[T](f: SelectFunc[T]) extends DataFactorySelectFunc[T] {
     override def apply(v1: T): Any = {
       val value = f.apply(v1)
       new Aggregate[Int](value.asInstanceOf[Int], (a, b) => a + b)
     }
+
+    override def setDataFactory(fac: DataFactory[T]) = {
+      f match {
+        case select: DataFactorySelectFunc[T] =>
+          select.setDataFactory(fac)
+        case _  => //do nothing
+      }
+    }
+
+    override def validate(): Unit = ???
   }
 
   def sum[T](f: SelectFunc[T]) = {

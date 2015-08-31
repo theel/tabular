@@ -11,7 +11,7 @@ import tabular.core.{DataFactory, Statement}
 
 class QueryTest extends FunSpec with ShouldMatchers {
 
-  case class Person(firstName: String, lastName: String, age: Int) {
+  case class Person(id: Int, firstName: String, lastName: String, age: Int, spouseId: Int) {
     override def toString() = "Person(%s, %s, %d)".format(firstName, lastName, age)
 
     def toRow() = Seq(firstName, lastName, age)
@@ -21,17 +21,20 @@ class QueryTest extends FunSpec with ShouldMatchers {
     override def getColumns(): Seq[Column[Person, _]] = Seq(//
       new Column[Person, String]("firstName", _.firstName), //
       new Column[Person, String]("lastName", _.lastName), //
-      new Column[Person, Int]("age", _.age) //
+      new Column[Person, Int]("age", _.age), //
+      new Column[Person, Int]("spouseId", _.spouseId)
     )
 
     override def getValue(value: Person, s: Symbol): Any = ???
   }
 
   val data = Seq(//
-    new Person("John", "Smith", 20), //
-    new Person("John", "Doe", 71), //
-    new Person("John", "Johnson", 5), //
-    new Person("Adam", "Smith", 10) //
+    new Person(0, "John", "Smith", 20, 4), //
+    new Person(1, "John", "Doe", 71, 5), //
+    new Person(2, "John", "Johnson", 5, -1), //
+    new Person(3, "Adam", "Smith", 10, -1), //
+    new Person(4, "Ann", "Smith", 10, 0), //
+    new Person(4, "Anna", "Doe", 10, 1) //
   )
   val dataRows = data.map(_.toRow())
 
@@ -136,12 +139,34 @@ class QueryTest extends FunSpec with ShouldMatchers {
       executeAndMatch(query1, expected1, Seq("firstName", "field1"))
     }
 
+
+    it("should group by and aggregate with aggregate function supporting symbol") {
+      val query1 = table select('firstName, sum[Person]('age)) groupBy ('firstName)
+      val grouped = data.map(p => (p.firstName, p.age)).groupBy(_._1).map(_._2) //Seq[(firstName, age)
+      val expected1 = grouped.map(_.reduce((a, b) => (a._1, a._2 + b._2))).map(t => Seq(t._1, t._2)).toSeq
+      executeAndMatch(query1, expected1, Seq("firstName", "field1"))
+    }
+
     it("should group by and aggregate with simple value") {
       val query1 = table select('firstName, 'lastName, sum[Person](_.age)) groupBy ('firstName)
       val grouped = data.map(p => (p.firstName, p.lastName, p.age)).groupBy(_._1).map(_._2) //Seq[(firstName, lastName, age)
       val expected1 = grouped.map(_.reduce((a, b) => (a._1, a._2, a._3 + b._3))).map(t => Seq(t._1, t._2, t._3)).toSeq
       executeAndMatch(query1, expected1, Seq("firstName", "field1"))
     }
+
+    it("should be able to join") {
+      val query1 = table join table select(_._1.firstName, _._2.firstName)
+      val grouped = data.map(p => (p.firstName, p.lastName, p.age)).groupBy(_._1).map(_._2) //Seq[(firstName, lastName, age)
+      val expected1 = grouped.map(_.reduce((a, b) => (a._1, a._2, a._3 + b._3))).map(t => Seq(t._1, t._2, t._3)).toSeq
+//      executeAndMatch(query1, expected1, Seq("firstName", "field1"))
+    }
+
+//    it("should group by and aggregate with simple value") {
+//      val query1 = table select('firstName, 'lastName, sum[Person](_.age)) groupBy ('firstName)
+//      val grouped = data.map(p => (p.firstName, p.lastName, p.age)).groupBy(_._1).map(_._2) //Seq[(firstName, lastName, age)
+//      val expected1 = grouped.map(_.reduce((a, b) => (a._1, a._2, a._3 + b._3))).map(t => Seq(t._1, t._2, t._3)).toSeq
+//      executeAndMatch(query1, expected1, Seq("firstName", "field1"))
+//    }
 
     //    it("should group by, aggregate and filter with having") {
     ////      val query1 = table select('firstName, sum[Person](_.age)) groupBy ('firstName) having (^[Person]('age).>(0))

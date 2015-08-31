@@ -1,9 +1,10 @@
 package tabular.core
 
-import tabular.core.QuerySupport.{AliasSelect, NamedSelect}
+import tabular.core.QuerySupport.{FuncSelect, AliasSelect, NamedSelect}
 import tabular.core.Tabular._
 import tabular.execution._
 import tabular.util.{RowSorter, Utils}
+
 import scala.collection.immutable.ListMap
 
 /**
@@ -12,7 +13,7 @@ import scala.collection.immutable.ListMap
  * data factory provides definition to extract attributes (firstName, lastName etc) from the Person type.
  *
  * The table-like structure provide a facility to compile a sql-like Statement into an executable Query
- * @param dataFac the data factory
+ * @param dataFac the schema
  * @tparam T type of rows
  */
 abstract class Tabular[T](val dataFac: DataFactory[T]) {
@@ -30,6 +31,8 @@ abstract class Tabular[T](val dataFac: DataFactory[T]) {
    */
   def rows(): Iterator[T]
 
+  def join[U](tab: Tabular[U]): JoinedTabular[T, U]
+
   /**
    * Compile a Statement into an executable Query.
    * @param stmt the statement
@@ -39,6 +42,22 @@ abstract class Tabular[T](val dataFac: DataFactory[T]) {
 
 }
 
+
+abstract class JoinedTabular[T, U](tab1: Tabular[T], tab2: Tabular[U]) extends Tabular[(T, U)](new JoinedDataFactory[T, U](tab1, tab2))
+
+class JoinedDataFactory[T, U](tab1: Tabular[T], tab2: Tabular[U]) extends DataFactory[(T, U)] {
+  val columns = (tab1.dataFac.getColumns().map {
+    column =>
+      new Column("table1." + column.name, new FuncSelect[(T, U)]( tuple => column.select.apply(tuple._1) ))
+  } ++ tab2.dataFac.getColumns().map {
+    column =>
+      new Column("table2." + column.name, new FuncSelect[(T, U)]( tuple => column.select.apply(tuple._2) ))
+  }).asInstanceOf[Seq[Column[(T, U), SelectFunc[(T, U)]]]]
+
+  override def getColumns(): Seq[Column[(T, U), SelectFunc[(T, U)] ]] = columns
+
+  def on (filter: FilterFunc[(T, U)]*) = ???
+}
 
 /**
  * A DataFactory providers metadata and allow extraction of value by their field names
@@ -55,7 +74,14 @@ abstract class DataFactory[T] {
 
   def getColumnNames(): Seq[String] = columnMap.keys.map(_.name).toSeq
 
-  def getValue(value: T, s: Symbol): Any
+  def getValue(value: T, s: Symbol): Any = {
+    columnMap(s) match {
+      case func: SelectFunc[T] =>
+        func.apply(value)
+      case _ =>
+        throw new IllegalStateException("Cannot find value")
+    }
+  }
 }
 
 /**
@@ -180,25 +206,6 @@ abstract class View[T](fac: DataFactory[T], val plan: ExecutionPlan[Table[T]]) e
  */
 abstract class Table[T](val fac: DataFactory[T]) extends Tabular[T](fac)
 
-
-//abstract class Step[That] {
-//  def execute(): That
-//}
-//
-//class IdentityStep[That](that: That) extends Step[That] {
-//  def execute(): That = that
-//}
-//
-//class ExecutionPlan[T](val spec: QuerySpec[T], val step: Step[T]) {
-//  def execute(): T = step.execute()
-//}
-//
-//class ExecutionStep[This, That](val desc: String, prev: Step[This], f: (This) => That) extends Step[That] {
-//  def execute(): That = {
-//    f.apply(prev.execute())
-//  }
-//}
-
 object Tabular {
 
   /**
@@ -259,10 +266,11 @@ object Tabular {
     val nameToColumns = fieldNames.zipWithIndex.map { case (name, index) => (Symbol(name), new Column[Row, Any](name, row => row(index)))}.toMap
 
     /** the columns **/
-    val columns = nameToColumns.values.toSeq
+    val columns = nameToColumns.values.toSeq.asInstanceOf[Seq[Column[Row, SelectFunc[Row]]]]
 
     /** get the columns **/
-    override def getColumns(): Seq[Column[Row, _]] = columns
+    override def getColumns(): Seq[Column[Row, SelectFunc[Row]]] = columns
+
 
     override def getValue(value: Row, s: Symbol): Any = nameToColumns(s).select.apply(value)
   }
