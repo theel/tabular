@@ -1,9 +1,8 @@
 import org.scalatest.FunSpec
 import org.scalatest.matchers.ShouldMatchers
 import tabular.ExprStructPrinter
+import tabular.expression.Expresso._
 import tabular.expression._
-import Expresso._
-import tabular._
 
 /**
  * Created by tiong on 8/3/14.
@@ -51,6 +50,13 @@ class ExpressoTest extends FunSpec with ShouldMatchers {
   it("should a") {
     //   (sym/(sum+1-1)/sym*
   }
+}
 
+class TestClass[T] {
+  def test(expr: Expr*) = {
+  }
 
+  def test2 = {
+    test(1, 2, 'test, 4 + 3, 4 - 4)
+  }
 }

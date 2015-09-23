@@ -228,9 +228,6 @@ object Expresso {
     println('a ne_ ('b + 2) and 'b)
     println(!('c + 'b))
     println(!'c)
-
-
-
     val expr = 'a + 1 eq_ 'b and 'c or !'d
   }
 }

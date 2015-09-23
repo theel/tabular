@@ -1,143 +1,131 @@
 package tabular
 
+import tabular.core.QuerySupport.AndFilterFunc
+import tabular.core.Tabular._
 import tabular.core._
-import QuerySupport.{AliasSelect, AndFilterFunc, NamedSelect}
-import tabular.core._
-import Tabular._
+import tabular.execution.ExecutionPlan
 
-
+/**
+ * A list implementation of tabular framework. The table wraps a list of T and allow executing sql query to it
+ * @param data a list of T
+ * @param fac the data factory for T
+ * @tparam T the type
+ */
 class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
-  type RowkeyFunc = (Row) => Row
-  type AggregateFunc = Seq[Row] => Row
 
-  class IndicesRowkeyFunc(indicies: Seq[Int]) extends RowkeyFunc {
-    override def apply(v1: Row): Row = {
-      indicies.map(v1(_))
-    }
-  }
-
-  class RowDataFactory(fieldNames: Seq[String]) extends DataFactory[Row] {
-
-    val columns = fieldNames.zipWithIndex.map { case (name, index) => new Column[Row, Any](name, row => row(index))}
-
-    override def getColumns(): Seq[Column[Row, _]] = columns
-
-    override def getValue(value: Row, s: String): Any = ???
-  }
-
-  class SimpleAggregateFunc extends AggregateFunc {
-
-    def apply(data: Seq[Row]): Row = {
-      val results = data.reduce((a: Row, b: Row) => {
-        a.zip(b).map(t => if (classOf[Aggregate[Int]].isInstance(t._1)) {
-          t._1.asInstanceOf[Aggregate[Int]].aggregate(t._2.asInstanceOf[Aggregate[Int]])
-        } else t._1)
-      })
-      results.map(a => if (classOf[Aggregate[Int]].isInstance(a)) a.asInstanceOf[Aggregate[Int]].data else a)
-    }
-  }
-
-
-  override def compile(stmt: Statement[T]): Query[T] = {
+  //TODO: Support row factory
+  override def compile[U](stmt: Statement[T], rowFactory: RowFactory[U] = new DefaultRowFactory): View[U] = {
     val spec = stmt.spec
-    val filteredData = if (spec.filters != null) {
-      data.filter(new AndFilterFunc[T](spec.filters.asInstanceOf[Seq[FilterFunc[T]]]))
-    } else {
-      data
-    }
-    val selectFieldNames: List[String] = spec.selects.zipWithIndex.map {
-      case (value, index) => value match {
-        case sym: NamedSelect[T] =>
-          sym.name
-        case alias: AliasSelect[T] =>
-          alias.name
-        case default =>
-          "field%d".format(index)
-      }
-    }.toList
-    val selects = spec.selects.asInstanceOf[Seq[SelectFunc[T]]]
-    val selectedGroupedData = if (spec.groupbys != null) {
-      //first select
-      val selectedData = filteredData.map(t => selects.map(_.apply(t)))
+    import tabular.execution.ExecutionPlanning._
 
-      //the group by
-      val groupIndices: Seq[Int] = getIndices(selectFieldNames, spec.groupbys)
-      val groupData = selectedData.groupBy(new IndicesRowkeyFunc(groupIndices))
-      val aggregatedData = groupData.map(t => aggregate(t._2))
-      aggregatedData
-      //TODO: implement having
-    } else {
-      val selectedData = filteredData.map(t => selects.map(_.apply(t)))
-      selectedData
-    }
-    //TODO: ordering, and limit
-    val ordered = if (spec.orderbys != null) {
-      val sortIndices = getIndices(selectFieldNames, spec.orderbys)
-      val sortFunc = (a: Row, b: Row) => {
-        var lt = false
-        var i = 0
-        val n=sortIndices.size
-        while (!lt && i < n){
-          val aValue = a(i)
-          val bValue = b(i)
-          val compared = aValue match {
-            case compA: Comparable[AnyRef] =>
-              compA.compareTo(bValue.asInstanceOf[AnyRef])
-            case orderA: Ordered[AnyRef] =>
-              orderA.compareTo(bValue.asInstanceOf[AnyRef])
-            case default =>
-              throw new IllegalArgumentException("Unknown sorting value " + aValue + " and " + bValue)
-          }
-          lt = compared < 0
-          i += 1
+    val selectFieldNames = spec.getSelectFieldNames
+    val fac = rowFactory.createDataFactory(spec)
+    val plan = Plan[Table[U]]("Plan for " + stmt.toString) {
+      Step[Seq[T]]("Identity step") {
+        data
+      }
+      //step 1 - filter
+      if (spec.filters != null) {
+        Step[Seq[T], Seq[T]]("Filtering") {
+          _.filter(new AndFilterFunc[T](spec.filters.asInstanceOf[Seq[FilterFunc[T]]]))
         }
-        lt
       }
-      selectedGroupedData.toSeq.sortWith {
-        sortFunc
-      }
-    } else {
-      selectedGroupedData
-    }
 
+      //step 2 - project
+      Step[Seq[T], Seq[U]]("Selecting fields") {
+        _.map(t => rowFactory.createRow(spec, t))
+      }
+
+      //step 3 - groupby
+      if (spec.groupbys != null) {
+        //TODO: Fix type U
+        Step[Seq[U], Seq[U]]("Group by") {
+          rowFactory.groupBy(spec, _)
+          //TODO: implement having
+        }
+      }
+      //TODO: ordering, and limit
+      if (spec.orderbys != null) {
+        Step[Seq[U], Seq[U]]("Order by") {
+          rowFactory.sort(spec, _)
+        }
+      }
+
+      Step[Seq[U], Table[U]]("Finalize") {
+        new ListTable[U](_, fac)
+      }
+    }
     //TODO: WIP regarding execution step
-    val step1 = new IdentityStep[Row](new ListView[Row](ordered.toSeq, new RowDataFactory(selectFieldNames)))
-    val step2 = new ExecutionStep[Row, Row]("Step2", step1, _.asInstanceOf[View[Row]])
-    new Query(spec, new Execution(step2))
-  }
-
-  def getIndices(fieldNames: List[String], names: Seq[Symbol]): Seq[Int] = {
-    val indices = names.map(symbol => fieldNames.indexOf(symbol.name))
-    val notFoundIndices = indices.zipWithIndex.filter(_._1 == -1).map(_._2) //find anything that doesn't have mapping in select
-    if (notFoundIndices.size > 0) {
-      val fieldNames = notFoundIndices.map(names(_))
-      throw new IllegalArgumentException("Unknown fields %s".format(fieldNames.mkString(",")))
-    }
-    indices
-  }
-
-  def aggregate(data: Seq[Row]): Row = {
-    val results = data.reduce((a: Row, b: Row) => {
-      a.zip(b).map(t => if (classOf[Aggregate[Int]].isInstance(t._1)) {
-        t._1.asInstanceOf[Aggregate[Int]].aggregate(t._2.asInstanceOf[Aggregate[Int]])
-      } else t._1)
-    })
-    results.map(a => if (classOf[Aggregate[Int]].isInstance(a)) a.asInstanceOf[Aggregate[Int]].data else a)
+    new ListView[U](fac, plan)
   }
 
   override def rows(): Iterator[T] = data.iterator
+
+  override def join[U](tab: Tabular[U]): JoinedTabular[T, U] =
+  {
+    new ListJoinedTabular[T, U](this, tab)
+  }
 }
 
-class ListView[T](data: Seq[T], fac: DataFactory[T]) extends View[T](fac) {
-  val impl = new ListTable(data, fac)
+class ListJoinedTabular[A, B](t1: Tabular[A], t2: Tabular[B])  extends JoinedTabular[A, B](t1, t2){
+  var funcA: SelectFunc[A] = (a) => 1
+
+  var funcB: SelectFunc[B] = (b) => 1
+  /**
+   * @return rows of data of type T
+   */
+  override def rows(): Iterator[(A, B)] = {
+    val t2rows = t2.rows().toSeq.map(row => (funcB.apply(row), row))
+    t1.rows().flatMap {
+      a =>
+        val aKey = funcA.apply(a)
+        t2rows.flatMap{
+          case (bKey, b) =>
+            if (aKey == bKey) Seq((a, b)) else Seq()
+        }
+    }.toIterator
+  }
+
+  override def join[U](tab: Tabular[U]): JoinedTabular[(A, B), U] = new ListJoinedTabular[(A, B), U](this, tab)
+
+  /**
+   * Compile a Statement into an executable Query.
+   * @param stmt the statement
+   * @return query that can be executed and get result of the statement
+   */
+  override def compile[U](stmt: Statement[(A, B)], rowFac: RowFactory[U]): View[U] = {
+    //TODO: Need to optimize this
+    new ListTable(rows.toList, dataFac).compile(stmt, rowFac)
+  }
+
+  override def select(selects: SelectFunc[(A, B)]*): Selected[(A, B)] = super.select(selects: _*)
+
+  override def on(fa: SelectFunc[A], fb: SelectFunc[B]): ListJoinedTabular[A, B] = {
+    if (funcA!=null){
+      funcA = fa
+      funcB = fb
+    } else {
+      throw new IllegalArgumentException("On specification is set")
+    }
+    this
+  }
+}
+
+class ListView[T](fac: DataFactory[T], plan: ExecutionPlan[Table[T]]) extends View[T](fac, plan) {
+  lazy val impl = plan.execute()
 
   //abstracts
   override def rows(): Iterator[T] = impl.rows()
 
-  override def compile(stmt: Statement[T]): Query[T] = impl.compile(stmt)
+  //TODO: work on chaining plan
+  override def compile[U](stmt: Statement[T], rowFac: RowFactory[U]): View[U] = impl.compile(stmt, rowFac)
 
   override def toString(): String = {
     val columns = fac.getColumns().map(c => "\"%s\"".format(c.name)).mkString(",")
     "ListView[%s]\n%s".format(columns, impl.rows().toSeq.mkString("\n"))
   }
+
+  override def materialize(): Table[T] = impl
+
+  override def join[U](tab: Tabular[U]): JoinedTabular[T, U] = impl.join(tab)
 }
