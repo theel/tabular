@@ -53,9 +53,10 @@ class ExpressoTest extends FunSpec with ShouldMatchers {
 }
 
 class TestClass[T] {
-  type F = (T) => Any
-  class Expression[F]
-  def test(expr: Expression) = {
+  def test(expr: Expr*) = {
+  }
 
+  def test2 = {
+    test(1, 2, 'test, 4 + 3, 4 - 4)
   }
 }

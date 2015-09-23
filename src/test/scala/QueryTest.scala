@@ -7,7 +7,7 @@ import org.scalatest.matchers.ShouldMatchers
 import tabular._
 import tabular.core.QuerySupport._
 import tabular.core.{DataFactory, Statement}
-
+import tabular.util.RowOrdering
 
 class QueryTest extends FunSpec with ShouldMatchers {
 
@@ -19,6 +19,7 @@ class QueryTest extends FunSpec with ShouldMatchers {
 
   class PersonDF extends DataFactory[Person] {
     override def getColumns(): Seq[Column[Person, _]] = Seq(//
+      new Column[Person, Int]("id", _.id),
       new Column[Person, String]("firstName", _.firstName), //
       new Column[Person, String]("lastName", _.lastName), //
       new Column[Person, Int]("age", _.age), //
@@ -40,7 +41,7 @@ class QueryTest extends FunSpec with ShouldMatchers {
 
   val table = new ListTable[Person](data, new PersonDF())
 
-  def executeAndMatch(query: Statement[Person], expected: Seq[Seq[Any]], columns: Seq[String]) = {
+  def executeAndMatch(query: Statement[_], expected: Seq[Seq[Any]], columns: Seq[String]) = {
     println("")
     val results = query.compile().materialize()
     results.fac.getColumns()
@@ -90,8 +91,8 @@ class QueryTest extends FunSpec with ShouldMatchers {
 
     it("should allow select *") {
       val query1 = table select ('*) //need to support multi-select
-      val expected1 = data.map(p => Seq(Seq(p.firstName, p.lastName, p.age))) //TODO: need to flatten
-      executeAndMatch(query1, expected1, Seq("firstName", "lastName", "age"))
+      val expected1 = data.map(p => Seq(Seq(p.id, p.firstName, p.lastName, p.age, p.spouseId))) //TODO: need to flatten
+      executeAndMatch(query1, expected1, Seq("id", "firstName", "lastName", "age", "spouseId"))
     }
 
     it("should allow support aliasing") {
@@ -133,32 +134,57 @@ class QueryTest extends FunSpec with ShouldMatchers {
     }
 
     it("should group by and aggregate with aggregate function") {
-      val query1 = table select('firstName, sum[Person](_.age)) groupBy ('firstName)
+      val query1 = table select('firstName, sum[Person](_.age)) groupBy ('firstName) orderBy  ('firstName)
       val grouped = data.map(p => (p.firstName, p.age)).groupBy(_._1).map(_._2) //Seq[(firstName, age)
-      val expected1 = grouped.map(_.reduce((a, b) => (a._1, a._2 + b._2))).map(t => Seq(t._1, t._2)).toSeq
+      val expected1 = grouped.map(_.reduce((a, b) => (a._1, a._2 + b._2))).map(t => Seq(t._1, t._2)).toSeq.sorted(RowOrdering)
       executeAndMatch(query1, expected1, Seq("firstName", "field1"))
     }
 
 
     it("should group by and aggregate with aggregate function supporting symbol") {
-      val query1 = table select('firstName, sum[Person]('age)) groupBy ('firstName)
+      val query1 = table select('firstName, sum[Person]('age)) groupBy ('firstName) orderBy ('firstName)
       val grouped = data.map(p => (p.firstName, p.age)).groupBy(_._1).map(_._2) //Seq[(firstName, age)
-      val expected1 = grouped.map(_.reduce((a, b) => (a._1, a._2 + b._2))).map(t => Seq(t._1, t._2)).toSeq
+      val expected1 = grouped.map(_.reduce((a, b) => (a._1, a._2 + b._2))).map(t => Seq(t._1, t._2)).toSeq.sorted(RowOrdering)
       executeAndMatch(query1, expected1, Seq("firstName", "field1"))
     }
 
     it("should group by and aggregate with simple value") {
-      val query1 = table select('firstName, 'lastName, sum[Person](_.age)) groupBy ('firstName)
+      val query1 = table select('firstName, 'lastName, sum[Person](_.age)) groupBy ('firstName) orderBy ('firstName)
       val grouped = data.map(p => (p.firstName, p.lastName, p.age)).groupBy(_._1).map(_._2) //Seq[(firstName, lastName, age)
       val expected1 = grouped.map(_.reduce((a, b) => (a._1, a._2, a._3 + b._3))).map(t => Seq(t._1, t._2, t._3)).toSeq
+
+      println(expected1)
+          val expected2 = expected1.sorted(RowOrdering)
+      println(expected2)
+      executeAndMatch(query1, expected2, Seq("firstName", "field1"))
+    }
+
+    it("should be able to do full-join") {
+      val query1 = table join table select(_._1.firstName, _._2.firstName)
+      val names = data.map(p => (p.firstName))
+      val expected1 = names.flatMap{
+        name => names.map(Seq(name, _))
+      }
       executeAndMatch(query1, expected1, Seq("firstName", "field1"))
     }
 
-    it("should be able to join") {
-      val query1 = table join table select(_._1.firstName, _._2.firstName)
-      val grouped = data.map(p => (p.firstName, p.lastName, p.age)).groupBy(_._1).map(_._2) //Seq[(firstName, lastName, age)
-      val expected1 = grouped.map(_.reduce((a, b) => (a._1, a._2, a._3 + b._3))).map(t => Seq(t._1, t._2, t._3)).toSeq
-//      executeAndMatch(query1, expected1, Seq("firstName", "field1"))
+    it("should be able to do join on") {
+      val query1 = table join table on (_.firstName, _.firstName) select(_._1.firstName, _._2.firstName)
+      val names = data.map(p => (p.firstName))
+      val expected1 = names.flatMap{
+        name1 => names.flatMap{name2 => if (name1==name2) Seq(Seq(name1, name2)) else Seq()}
+      }
+      executeAndMatch(query1, expected1, Seq("firstName", "field1"))
+    }
+
+
+    def greaterThan(a: Seq[Any], b: Seq[Any]): Boolean ={
+        var flag = false
+        a.zip(b).foreach {
+          case (t1, t2) =>
+            flag |= t1.toString<t2.toString
+        }
+        flag
     }
 
 //    it("should group by and aggregate with simple value") {

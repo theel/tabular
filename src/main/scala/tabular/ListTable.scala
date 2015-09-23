@@ -61,10 +61,54 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
 
   override def rows(): Iterator[T] = data.iterator
 
-  override def join[U](tab: Tabular[U]): JoinedTabular[T, U] = ???
-//  {
-//    new ListJoinedTabular[T, U](this, tab);
-//  }
+  override def join[U](tab: Tabular[U]): JoinedTabular[T, U] =
+  {
+    new ListJoinedTabular[T, U](this, tab)
+  }
+}
+
+class ListJoinedTabular[A, B](t1: Tabular[A], t2: Tabular[B])  extends JoinedTabular[A, B](t1, t2){
+  var funcA: SelectFunc[A] = (a) => 1
+
+  var funcB: SelectFunc[B] = (b) => 1
+  /**
+   * @return rows of data of type T
+   */
+  override def rows(): Iterator[(A, B)] = {
+    val t2rows = t2.rows().toSeq.map(row => (funcB.apply(row), row))
+    t1.rows().flatMap {
+      a =>
+        val aKey = funcA.apply(a)
+        t2rows.flatMap{
+          case (bKey, b) =>
+            if (aKey == bKey) Seq((a, b)) else Seq()
+        }
+    }.toIterator
+  }
+
+  override def join[U](tab: Tabular[U]): JoinedTabular[(A, B), U] = new ListJoinedTabular[(A, B), U](this, tab)
+
+  /**
+   * Compile a Statement into an executable Query.
+   * @param stmt the statement
+   * @return query that can be executed and get result of the statement
+   */
+  override def compile[U](stmt: Statement[(A, B)], rowFac: RowFactory[U]): View[U] = {
+    //TODO: Need to optimize this
+    new ListTable(rows.toList, dataFac).compile(stmt, rowFac)
+  }
+
+  override def select(selects: SelectFunc[(A, B)]*): Selected[(A, B)] = super.select(selects: _*)
+
+  override def on(fa: SelectFunc[A], fb: SelectFunc[B]): ListJoinedTabular[A, B] = {
+    if (funcA!=null){
+      funcA = fa
+      funcB = fb
+    } else {
+      throw new IllegalArgumentException("On specification is set")
+    }
+    this
+  }
 }
 
 class ListView[T](fac: DataFactory[T], plan: ExecutionPlan[Table[T]]) extends View[T](fac, plan) {
@@ -84,14 +128,4 @@ class ListView[T](fac: DataFactory[T], plan: ExecutionPlan[Table[T]]) extends Vi
   override def materialize(): Table[T] = impl
 
   override def join[U](tab: Tabular[U]): JoinedTabular[T, U] = impl.join(tab)
-}
-
-abstract class ListJoinedTabular[T, U](tab1: Tabular[T], tab2: Tabular[U]) extends JoinedTabular[T, U](tab1, tab2) {
-  /**
-   * @return rows of data of type T
-   */
-  override def rows(): Iterator[(T, U)] = ???
-
-  override def join[V](tab: Tabular[V]): JoinedTabular[(T, U), V] = ???
-
 }

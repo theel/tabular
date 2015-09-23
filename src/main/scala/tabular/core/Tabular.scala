@@ -43,7 +43,9 @@ abstract class Tabular[T](val dataFac: DataFactory[T]) {
 }
 
 
-abstract class JoinedTabular[T, U](tab1: Tabular[T], tab2: Tabular[U]) extends Tabular[(T, U)](new JoinedDataFactory[T, U](tab1, tab2))
+abstract class JoinedTabular[A, B](tab1: Tabular[A], tab2: Tabular[B]) extends Tabular[(A, B)](new JoinedDataFactory[A, B](tab1, tab2)){
+  def on(funcA: SelectFunc[A], funcB: SelectFunc[B]): JoinedTabular[A, B]
+}
 
 class JoinedDataFactory[T, U](tab1: Tabular[T], tab2: Tabular[U]) extends DataFactory[(T, U)] {
   val columns = (tab1.dataFac.getColumns().map {
@@ -56,7 +58,6 @@ class JoinedDataFactory[T, U](tab1: Tabular[T], tab2: Tabular[U]) extends DataFa
 
   override def getColumns(): Seq[Column[(T, U), SelectFunc[(T, U)] ]] = columns
 
-  def on (filter: FilterFunc[(T, U)]*) = ???
 }
 
 /**
