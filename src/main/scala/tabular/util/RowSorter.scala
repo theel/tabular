@@ -5,16 +5,18 @@ import tabular.core.Tabular.Row
 object RowOrdering extends Ordering[Row] {
   override def compare(x: Row, y: Row): Int = {
     var i = 0
-    while (i<x.length){
+    while (i < x.length) {
       val (a, b) = (x(i).toString, y(i).toString)
-      val value  = a.compare(b)
-      if (value!=0){
+      val value = a.compare(b)
+      if (value != 0) {
         return value
       }
+      i += 1
     }
     return 0
   }
 }
+
 /**
  * Created by tiong on 8/19/15.
  */

@@ -1,9 +1,13 @@
-package tabular
+package tabular.list
 
 import tabular.core.QuerySupport.AndFilterFunc
 import tabular.core.Tabular._
 import tabular.core._
 import tabular.execution.ExecutionPlan
+import tabular.util.Utils.IndicesRowkeyFunc
+import tabular.util.{RowSorter, Utils}
+
+import scala.reflect.ClassTag
 
 /**
  * A list implementation of tabular framework. The table wraps a list of T and allow executing sql query to it
@@ -14,13 +18,13 @@ import tabular.execution.ExecutionPlan
 class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
 
   //TODO: Support row factory
-  override def compile[U](stmt: Statement[T], rowFactory: RowFactory[U] = new DefaultRowFactory): View[U] = {
+  override def compile(stmt: Statement[T]): View[Row] = {
     val spec = stmt.spec
     import tabular.execution.ExecutionPlanning._
 
     val selectFieldNames = spec.getSelectFieldNames
-    val fac = rowFactory.createDataFactory(spec)
-    val plan = Plan[Table[U]]("Plan for " + stmt.toString) {
+    val fac = new RowDataFactory(spec.getSelectFieldNames.map(_.name))
+    val plan = Plan[Table[Row]]("Plan for " + stmt.toString) {
       Step[Seq[T]]("Identity step") {
         data
       }
@@ -32,36 +36,62 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
       }
 
       //step 2 - project
-      Step[Seq[T], Seq[U]]("Selecting fields") {
-        _.map(t => rowFactory.createRow(spec, t))
+      Step[Seq[T], Seq[Row]]("Selecting fields") {
+        _.map(t => selectOp(spec.selects, t))
       }
 
       //step 3 - groupby
       if (spec.groupbys != null) {
         //TODO: Fix type U
-        Step[Seq[U], Seq[U]]("Group by") {
-          rowFactory.groupBy(spec, _)
+        Step[Seq[Row], Seq[Row]]("Group by") {
+          groupByOp(spec, _)
           //TODO: implement having
         }
       }
       //TODO: ordering, and limit
       if (spec.orderbys != null) {
-        Step[Seq[U], Seq[U]]("Order by") {
-          rowFactory.sort(spec, _)
+        Step[Seq[Row], Seq[Row]]("Order by") {
+          sort(spec, _)
         }
       }
 
-      Step[Seq[U], Table[U]]("Finalize") {
-        new ListTable[U](_, fac)
+      Step[Seq[Row], Table[Row]]("Finalize") {
+        new ListTable[Row](_, fac)
       }
     }
     //TODO: WIP regarding execution step
-    new ListView[U](fac, plan)
+    new ListView[Row](fac, plan)
+  }
+
+  private def aggregate(data: Seq[Row]): Row = {
+    val results = data.reduce((a: Row, b: Row) => {
+      a.zip(b).map(t => if (classOf[Aggregate[Int]].isInstance(t._1)) {
+        t._1.asInstanceOf[Aggregate[Int]].aggregate(t._2.asInstanceOf[Aggregate[Int]])
+      } else t._1)
+    })
+    results.map(a => if (classOf[Aggregate[Int]].isInstance(a)) a.asInstanceOf[Aggregate[Int]].data else a)
+  }
+
+  private def selectOp[T](selects: Seq[SelectFunc[T]], value: T): Row  = selects.map(_.apply(value))
+
+
+  private def sort[T](spec: QuerySpec[T], data: Seq[Row]): Seq[Row] = {
+    val sortIndices = Utils.getIndices(spec.getSelectFieldNames, spec.orderbys)
+    data.sortWith {
+      new RowSorter(sortIndices)
+    }
+  }
+
+  private def groupByOp[T](spec: QuerySpec[T], data: Seq[Row]): Seq[Row] = {
+    val groupIndices: Seq[Int] = Utils.getIndices(spec.getSelectFieldNames, spec.groupbys)
+    val groupData = data.groupBy(new IndicesRowkeyFunc(groupIndices))
+    val aggregatedData = groupData.map(t => aggregate(t._2))
+    aggregatedData.toSeq
   }
 
   override def rows(): Iterator[T] = data.iterator
 
-  override def join[U](tab: Tabular[U]): JoinedTabular[T, U] =
+  override def join[U: ClassTag](tab: Tabular[U]): JoinedTabular[T, U] =
   {
     new ListJoinedTabular[T, U](this, tab)
   }
@@ -86,16 +116,16 @@ class ListJoinedTabular[A, B](t1: Tabular[A], t2: Tabular[B])  extends JoinedTab
     }.toIterator
   }
 
-  override def join[U](tab: Tabular[U]): JoinedTabular[(A, B), U] = new ListJoinedTabular[(A, B), U](this, tab)
+  override def join[U: ClassTag](tab: Tabular[U]): JoinedTabular[(A, B), U] = new ListJoinedTabular[(A, B), U](this, tab)
 
   /**
    * Compile a Statement into an executable Query.
    * @param stmt the statement
    * @return query that can be executed and get result of the statement
    */
-  override def compile[U](stmt: Statement[(A, B)], rowFac: RowFactory[U]): View[U] = {
+  override def compile(stmt: Statement[(A, B)]): View[Row] = {
     //TODO: Need to optimize this
-    new ListTable(rows.toList, dataFac).compile(stmt, rowFac)
+    new ListTable(rows.toList, dataFac).compile(stmt)
   }
 
   override def select(selects: SelectFunc[(A, B)]*): Selected[(A, B)] = super.select(selects: _*)
@@ -118,7 +148,7 @@ class ListView[T](fac: DataFactory[T], plan: ExecutionPlan[Table[T]]) extends Vi
   override def rows(): Iterator[T] = impl.rows()
 
   //TODO: work on chaining plan
-  override def compile[U](stmt: Statement[T], rowFac: RowFactory[U]): View[U] = impl.compile(stmt, rowFac)
+  override def compile(stmt: Statement[T]): View[Row] = impl.compile(stmt)
 
   override def toString(): String = {
     val columns = fac.getColumns().map(c => "\"%s\"".format(c.name)).mkString(",")
@@ -127,5 +157,5 @@ class ListView[T](fac: DataFactory[T], plan: ExecutionPlan[Table[T]]) extends Vi
 
   override def materialize(): Table[T] = impl
 
-  override def join[U](tab: Tabular[U]): JoinedTabular[T, U] = impl.join(tab)
+  override def join[U: ClassTag](tab: Tabular[U]): JoinedTabular[T, U] = impl.join(tab)
 }

@@ -1,9 +1,8 @@
 package tabular.core
 
-import tabular.core.QuerySupport.{FuncSelect, AliasSelect, NamedSelect}
+import tabular.core.QuerySupport.{AliasSelect, FuncSelect, NamedSelect}
 import tabular.core.Tabular._
 import tabular.execution._
-import tabular.util.{RowSorter, Utils}
 
 import scala.collection.immutable.ListMap
 
@@ -13,9 +12,11 @@ import scala.collection.immutable.ListMap
  * data factory provides definition to extract attributes (firstName, lastName etc) from the Person type.
  *
  * The table-like structure provide a facility to compile a sql-like Statement into an executable Query
- * @param dataFac the schema
- * @tparam T type of rows
+ *
  */
+
+import scala.reflect._
+
 abstract class Tabular[T](val dataFac: DataFactory[T]) {
 
   def select(selects: SelectFunc[T]*): Selected[T] = {
@@ -31,14 +32,14 @@ abstract class Tabular[T](val dataFac: DataFactory[T]) {
    */
   def rows(): Iterator[T]
 
-  def join[U](tab: Tabular[U]): JoinedTabular[T, U]
+  def join[U: ClassTag](tab: Tabular[U]): JoinedTabular[T, U]
 
   /**
    * Compile a Statement into an executable Query.
    * @param stmt the statement
    * @return query that can be executed and get result of the statement
    */
-  def compile[U](stmt: Statement[T], rowFac: RowFactory[U] = new DefaultRowFactory): View[U]
+  def compile(stmt: Statement[T]): View[Row]
 
 }
 
@@ -128,7 +129,7 @@ class Statement[T](val spec: QuerySpec[T]) {
  * 7. limit
  * @tparam T the type T
  */
-case class QuerySpec[T](val table: Tabular[T]) extends Cloneable {
+case class QuerySpec[T](@transient  val table: Tabular[T]) extends Cloneable {
   var limit: Limit = null
   var having: Seq[FilterFunc[Row]] = null
   var orderbys: Seq[Symbol] = null
@@ -282,63 +283,54 @@ object Tabular {
     }
   }
 
-  abstract class RowFactory[U] {
+  import scala.reflect.ClassTag
+
+  abstract class RowFactory[U: ClassTag] {
+    import scala.reflect._
+    val tag = classTag[U]
+
     def createDataFactory[T](spec: QuerySpec[T]): DataFactory[U]
 
-    def sort[T](spec: QuerySpec[T], data: Seq[U]): Seq[U]
+//    def sort[T](spec: QuerySpec[T], data: Seq[U]): Seq[U]
+//
+//    def groupBy[T](spec: QuerySpec[T], data: Seq[U]): Seq[U]
 
-    def groupBy[T](spec: QuerySpec[T], data: Seq[U]): Seq[U]
-
-    def createRow[T](spec: QuerySpec[T], value: T): U
+//    def createRow[T](spec: QuerySpec[T], value: T): U
   }
 
-  class DefaultRowFactory extends RowFactory[Row] {
+  object DefaultRowFactory extends RowFactory[Row] {
 
-    type RowkeyFunc = (Row) => Row
 
-    type AggregateFunc = Seq[Row] => Row
+//    class IndicesRowkeyFunc(indicies: Seq[Int]) extends RowkeyFunc {
+//      override def apply(v1: Row): Row = {
+//        indicies.map(v1(_))
+//      }
+//    }
 
-    class SimpleAggregateFunc extends AggregateFunc {
-      def apply(data: Seq[Row]): Row = {
-        val results = data.reduce((a: Row, b: Row) => {
-          a.zip(b).map(t => if (classOf[Aggregate[Int]].isInstance(t._1)) {
-            t._1.asInstanceOf[Aggregate[Int]].aggregate(t._2.asInstanceOf[Aggregate[Int]])
-          } else t._1)
-        })
-        results.map(a => if (classOf[Aggregate[Int]].isInstance(a)) a.asInstanceOf[Aggregate[Int]].data else a)
-      }
-    }
+//    override def createRow[T](spec: QuerySpec[T], value: T): Row  = spec.selects.map(_.apply(value))
 
-    class IndicesRowkeyFunc(indicies: Seq[Int]) extends RowkeyFunc {
-      override def apply(v1: Row): Row = {
-        indicies.map(v1(_))
-      }
-    }
-
-    override def createRow[T](spec: QuerySpec[T], value: T): Row  = spec.selects.map(_.apply(value))
-
-    override def groupBy[T](spec: QuerySpec[T], data: Seq[Row]): Seq[Row] = {
-      val groupIndices: Seq[Int] = Utils.getIndices(spec.getSelectFieldNames, spec.groupbys)
-      val groupData = data.groupBy(new IndicesRowkeyFunc(groupIndices))
-      val aggregatedData = groupData.map(t => aggregate(t._2))
-      aggregatedData.toSeq
-    }
-
-    private def aggregate(data: Seq[Row]): Row = {
-      val results = data.reduce((a: Row, b: Row) => {
-        a.zip(b).map(t => if (classOf[Aggregate[Int]].isInstance(t._1)) {
-          t._1.asInstanceOf[Aggregate[Int]].aggregate(t._2.asInstanceOf[Aggregate[Int]])
-        } else t._1)
-      })
-      results.map(a => if (classOf[Aggregate[Int]].isInstance(a)) a.asInstanceOf[Aggregate[Int]].data else a)
-    }
-
-    override def sort[T](spec: QuerySpec[T], data: Seq[Row]): Seq[Row] = {
-      val sortIndices = Utils.getIndices(spec.getSelectFieldNames, spec.orderbys)
-      data.sortWith {
-        new RowSorter(sortIndices)
-      }
-    }
+//    override def groupBy[T](spec: QuerySpec[T], data: Seq[Row]): Seq[Row] = {
+//      val groupIndices: Seq[Int] = Utils.getIndices(spec.getSelectFieldNames, spec.groupbys)
+//      val groupData = data.groupBy(new IndicesRowkeyFunc(groupIndices))
+//      val aggregatedData = groupData.map(t => aggregate(t._2))
+//      aggregatedData.toSeq
+//    }
+//
+//    private def aggregate(data: Seq[Row]): Row = {
+//      val results = data.reduce((a: Row, b: Row) => {
+//        a.zip(b).map(t => if (classOf[Aggregate[Int]].isInstance(t._1)) {
+//          t._1.asInstanceOf[Aggregate[Int]].aggregate(t._2.asInstanceOf[Aggregate[Int]])
+//        } else t._1)
+//      })
+//      results.map(a => if (classOf[Aggregate[Int]].isInstance(a)) a.asInstanceOf[Aggregate[Int]].data else a)
+//    }
+//
+//    override def sort[T](spec: QuerySpec[T], data: Seq[Row]): Seq[Row] = {
+//      val sortIndices = Utils.getIndices(spec.getSelectFieldNames, spec.orderbys)
+//      data.sortWith {
+//        new RowSorter(sortIndices)
+//      }
+//    }
 
     override def createDataFactory[T](spec: QuerySpec[T]): DataFactory[Row] = {
       new RowDataFactory(spec.getSelectFieldNames.map(_.name))
