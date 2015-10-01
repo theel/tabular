@@ -1,6 +1,6 @@
 package tabular.util
 
-import tabular.core.Tabular.Row
+import tabular.core.Table.Row
 
 object RowOrdering extends Ordering[Row] {
   override def compare(x: Row, y: Row): Int = {

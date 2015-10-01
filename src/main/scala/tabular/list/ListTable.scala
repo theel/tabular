@@ -1,9 +1,9 @@
 package tabular.list
 
 import tabular.core.QuerySupport.AndFilterFunc
-import tabular.core.Tabular._
+import tabular.core.Table._
 import tabular.core._
-import tabular.execution.ExecutionPlan
+import tabular.execution.{ExecutionPlan, IdentityStep}
 import tabular.util.Utils.IndicesRowkeyFunc
 import tabular.util.{RowSorter, Utils}
 
@@ -11,22 +11,25 @@ import scala.reflect.ClassTag
 
 /**
  * A list implementation of tabular framework. The table wraps a list of T and allow executing sql query to it
- * @param data a list of T
+ * @param plan the execution plan for the table
  * @param fac the data factory for T
  * @tparam T the type
  */
-class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
+class ListTable[T](plan: ExecutionPlan[Seq[T]], fac: DataFactory[T]) extends Table[T](fac) {
+
+  def this(data: Seq[T], fac: DataFactory[T]) = this(
+    new ExecutionPlan[Seq[T]]("source", new IdentityStep[Seq[T]](data)), fac)
 
   //TODO: Support row factory
-  override def compile(stmt: Statement[T]): View[Row] = {
+  override def compile(stmt: Statement[T]): Table[Row] = {
     val spec = stmt.spec
     import tabular.execution.ExecutionPlanning._
 
     val selectFieldNames = spec.getSelectFieldNames
     val fac = new RowDataFactory(spec.getSelectFieldNames.map(_.name))
-    val plan = Plan[Table[Row]]("Plan for " + stmt.toString) {
+    val plan = Plan[Seq[Row]]("Plan for " + stmt.toString) {
       Step[Seq[T]]("Identity step") {
-        data
+        this.plan.execute()
       }
       //step 1 - filter
       if (spec.filters != null) {
@@ -54,13 +57,9 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
           sort(spec, _)
         }
       }
-
-      Step[Seq[Row], Table[Row]]("Finalize") {
-        new ListTable[Row](_, fac)
-      }
     }
     //TODO: WIP regarding execution step
-    new ListView[Row](fac, plan)
+    new ListTable[Row](plan, fac)
   }
 
   private def aggregate(data: Seq[Row]): Row = {
@@ -89,15 +88,15 @@ class ListTable[T](data: Seq[T], fac: DataFactory[T]) extends Table[T](fac) {
     aggregatedData.toSeq
   }
 
-  override def rows(): Iterator[T] = data.iterator
+  override def rows(): Iterator[T] = plan.execute().iterator
 
-  override def join[U: ClassTag](tab: Tabular[U]): JoinedTabular[T, U] =
+  override def join[U: ClassTag](tab: Table[U]): JoinedTable[T, U] =
   {
     new ListJoinedTabular[T, U](this, tab)
   }
 }
 
-class ListJoinedTabular[A, B](t1: Tabular[A], t2: Tabular[B])  extends JoinedTabular[A, B](t1, t2){
+class ListJoinedTabular[A, B](t1: Table[A], t2: Table[B])  extends JoinedTable[A, B](t1, t2){
   var funcA: SelectFunc[A] = (a) => 1
 
   var funcB: SelectFunc[B] = (b) => 1
@@ -116,14 +115,14 @@ class ListJoinedTabular[A, B](t1: Tabular[A], t2: Tabular[B])  extends JoinedTab
     }.toIterator
   }
 
-  override def join[U: ClassTag](tab: Tabular[U]): JoinedTabular[(A, B), U] = new ListJoinedTabular[(A, B), U](this, tab)
+  override def join[U: ClassTag](tab: Table[U]): JoinedTable[(A, B), U] = new ListJoinedTabular[(A, B), U](this, tab)
 
   /**
    * Compile a Statement into an executable Query.
    * @param stmt the statement
    * @return query that can be executed and get result of the statement
    */
-  override def compile(stmt: Statement[(A, B)]): View[Row] = {
+  override def compile(stmt: Statement[(A, B)]): Table[Row] = {
     //TODO: Need to optimize this
     new ListTable(rows.toList, dataFac).compile(stmt)
   }
@@ -139,23 +138,4 @@ class ListJoinedTabular[A, B](t1: Tabular[A], t2: Tabular[B])  extends JoinedTab
     }
     this
   }
-}
-
-class ListView[T](fac: DataFactory[T], plan: ExecutionPlan[Table[T]]) extends View[T](fac, plan) {
-  lazy val impl = plan.execute()
-
-  //abstracts
-  override def rows(): Iterator[T] = impl.rows()
-
-  //TODO: work on chaining plan
-  override def compile(stmt: Statement[T]): View[Row] = impl.compile(stmt)
-
-  override def toString(): String = {
-    val columns = fac.getColumns().map(c => "\"%s\"".format(c.name)).mkString(",")
-    "ListView[%s]\n%s".format(columns, impl.rows().toSeq.mkString("\n"))
-  }
-
-  override def materialize(): Table[T] = impl
-
-  override def join[U: ClassTag](tab: Tabular[U]): JoinedTabular[T, U] = impl.join(tab)
 }
