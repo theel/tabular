@@ -9,4 +9,4 @@ The goals of Tabular is to
 3. Be independent of underlying data processing mechanism so the same program is (mostly) transferable between data processing platforms (hadoop, spark, csv etc)
 
 This is work in progress and the only supported mechanism is in-memory List of List (a table with rows).
-See the supported DSL https://github.com/theel/tabular/blob/master/src/test/scala/QueryTest.scala
+See the supported DSL https://github.com/theel/tabular/blob/master/src/test/scala/BaseTableTest.scala
